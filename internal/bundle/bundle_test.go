@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
-const golden = "../../testdata/golden-bundle/demo"
+const (
+	golden   = "../../testdata/golden-bundle/demo"    // schema v1
+	goldenV2 = "../../testdata/golden-bundle/figures" // schema v2, pictures
+)
 
 func TestLoadGolden(t *testing.T) {
 	b, err := Load(golden)
@@ -41,12 +45,42 @@ func TestChapterBounds(t *testing.T) {
 	}
 }
 
+func TestLoadGoldenV2(t *testing.T) {
+	b, err := Load(goldenV2)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	a, err := b.LoadAlignment(b.Manifest.Chapters[0])
+	if err != nil {
+		t.Fatalf("LoadAlignment: %v", err)
+	}
+	var kinds []BlockKind
+	for _, blk := range a.Blocks {
+		kinds = append(kinds, blk.Kind)
+	}
+	want := []BlockKind{KindFigure, KindHeading, KindParagraph, KindFigure, KindParagraph}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("kinds = %v, want %v", kinds, want)
+	}
+	if got := b.ImagePath(a.Blocks[3]); got != filepath.Join(goldenV2, "images", "001.png") {
+		t.Errorf("ImagePath = %q", got)
+	}
+	if got := b.ImagePath(a.Blocks[2]); got != "" {
+		t.Errorf("ImagePath(paragraph) = %q, want empty", got)
+	}
+}
+
 // copyGolden copies the golden bundle into a temp dir and applies edit to the
 // named JSON file, so each test breaks exactly one rule.
 func copyGolden(t *testing.T, file string, edit func(map[string]any)) string {
 	t.Helper()
+	return copyBundle(t, golden, file, edit)
+}
+
+func copyBundle(t *testing.T, src, file string, edit func(map[string]any)) string {
+	t.Helper()
 	dst := t.TempDir()
-	err := os.CopyFS(dst, os.DirFS(golden))
+	err := os.CopyFS(dst, os.DirFS(src))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +113,7 @@ func firstWords(doc map[string]any) []any {
 
 func TestManifestRejects(t *testing.T) {
 	cases := map[string]func(map[string]any){
-		"schema version": func(d map[string]any) { d["schema_version"] = 2 },
+		"schema version": func(d map[string]any) { d["schema_version"] = 3 },
 		"bad id":         func(d map[string]any) { d["id"] = "Bad ID" },
 		"unknown field":  func(d map[string]any) { d["extra"] = true },
 		"path escape": func(d map[string]any) {
@@ -120,9 +154,15 @@ func TestAlignmentRejects(t *testing.T) {
 		"past duration": func(d map[string]any) {
 			firstWords(d)[3].(map[string]any)["e"] = 99.0
 		},
-		"wrong chapter":  func(d map[string]any) { d["chapter_index"] = 2 },
-		"unknown kind":   func(d map[string]any) { d["blocks"].([]any)[0].(map[string]any)["kind"] = "img" },
-		"schema version": func(d map[string]any) { d["schema_version"] = 0 },
+		"wrong chapter":        func(d map[string]any) { d["chapter_index"] = 2 },
+		"unknown kind":         func(d map[string]any) { d["blocks"].([]any)[0].(map[string]any)["kind"] = "img" },
+		"schema version":       func(d map[string]any) { d["schema_version"] = 0 },
+		"not manifest version": func(d map[string]any) { d["schema_version"] = 2 },
+		"picture in v1": func(d map[string]any) {
+			d["blocks"] = append(d["blocks"].([]any), map[string]any{
+				"kind": "fig", "image": "chapters/001.opus", "words": []any{},
+			})
+		},
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -145,5 +185,30 @@ func TestIsSlug(t *testing.T) {
 		if got := isSlug(s); got != want {
 			t.Errorf("isSlug(%q) = %v, want %v", s, got, want)
 		}
+	}
+}
+
+func TestPictureRejects(t *testing.T) {
+	block := func(d map[string]any, i int) map[string]any {
+		return d["blocks"].([]any)[i].(map[string]any)
+	}
+	cases := map[string]func(map[string]any){
+		"no image":         func(d map[string]any) { delete(block(d, 0), "image") },
+		"image escapes":    func(d map[string]any) { block(d, 0)["image"] = "../../etc/passwd" },
+		"absolute image":   func(d map[string]any) { block(d, 0)["image"] = "/etc/passwd" },
+		"missing image":    func(d map[string]any) { block(d, 0)["image"] = "images/nope.png" },
+		"image on heading": func(d map[string]any) { block(d, 1)["image"] = "images/001.png" },
+		"empty paragraph":  func(d map[string]any) { block(d, 2)["words"] = []any{} },
+	}
+	for name, edit := range cases {
+		t.Run(name, func(t *testing.T) {
+			b, err := Load(copyBundle(t, goldenV2, "chapters/001.align.json", edit))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if _, err := b.LoadAlignment(b.Manifest.Chapters[0]); err == nil {
+				t.Fatal("LoadAlignment succeeded, want error")
+			}
+		})
 	}
 }

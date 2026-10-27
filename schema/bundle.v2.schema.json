@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audiobook.local/schema/bundle.v2.schema.json",
+  "title": "Audiobook bundle v2",
+  "description": "Contract between audiobook-forge (writer) and audiobook-reader (reader). Keep byte-identical in both repos. v2 adds picture blocks (kind \"fig\"); readers still load v1 (bundle.v1.schema.json).",
+  "$defs": {
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "id", "title", "author", "language", "voice", "created", "chapters"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "id": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "title": { "type": "string", "minLength": 1 },
+        "author": { "type": "string" },
+        "language": { "type": "string", "minLength": 2 },
+        "voice": { "type": "string" },
+        "created": { "type": "string", "format": "date-time" },
+        "cover": { "type": "string" },
+        "chapters": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/chapter" }
+        }
+      }
+    },
+    "chapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "title", "audio", "alignment", "duration_s"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "audio": { "type": "string", "minLength": 1 },
+        "alignment": { "type": "string", "minLength": 1 },
+        "duration_s": { "type": "number", "minimum": 0 }
+      }
+    },
+    "alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "chapter_index", "blocks"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "chapter_index": { "type": "integer", "minimum": 1 },
+        "blocks": { "type": "array", "items": { "$ref": "#/$defs/block" } }
+      }
+    },
+    "block": {
+      "description": "A \"fig\" block is a picture: image is a bundle path, words (caption, else alt text) may be empty. \"p\"/\"h\" blocks have words and no image.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "words"],
+      "properties": {
+        "kind": { "enum": ["p", "h", "fig"] },
+        "image": { "type": "string", "minLength": 1 },
+        "words": { "type": "array", "items": { "$ref": "#/$defs/word" } }
+      },
+      "if": { "properties": { "kind": { "const": "fig" } } },
+      "then": { "required": ["image"] },
+      "else": { "not": { "required": ["image"] }, "properties": { "words": { "minItems": 1 } } }
+    },
+    "word": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "s", "e"],
+      "properties": {
+        "t": { "type": "string", "minLength": 1 },
+        "s": { "type": "number", "minimum": 0 },
+        "e": { "type": "number", "minimum": 0 }
+      }
+    }
+  },
+  "oneOf": [{ "$ref": "#/$defs/manifest" }, { "$ref": "#/$defs/alignment" }]
+}

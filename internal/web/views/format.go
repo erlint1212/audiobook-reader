@@ -33,6 +33,10 @@ func chapterURL(id string, ch int) templ.SafeURL {
 	return templ.URL(fmt.Sprintf("/books/%s/ch/%d", id, ch))
 }
 
+func imageURL(id string, ch, block int) string {
+	return fmt.Sprintf("/books/%s/ch/%d/img/%d", id, ch, block)
+}
+
 func resumeURL(id string, p progress.Position) templ.SafeURL {
 	return templ.URL(fmt.Sprintf("/books/%s/ch/%d?t=%s", id, p.Chapter, secs(p.Time)))
 }

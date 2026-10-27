@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -36,19 +37,28 @@ func do(s *Server, r *http.Request) *httptest.ResponseRecorder {
 func TestRoutesStatus(t *testing.T) {
 	s, _ := newTestServer(t)
 	cases := map[string]int{
-		"/":                     200,
-		"/books/demo":           200,
-		"/books/demo/ch/1":      200,
-		"/books/demo/ch/2":      200,
-		"/books/demo/audio/1":   200,
-		"/static/sync.js":       200,
-		"/books/nope":           404,
-		"/books/demo/ch/0":      404,
-		"/books/demo/ch/3":      404,
-		"/books/demo/ch/x":      404,
-		"/books/demo/audio/9":   404,
-		"/books/demo/cover":     404,
-		"/books/demo/ch/1/../2": 307, // ServeMux cleans paths with a redirect
+		"/":                          200,
+		"/books/demo":                200,
+		"/books/demo/ch/1":           200,
+		"/books/demo/ch/2":           200,
+		"/books/demo/audio/1":        200,
+		"/static/sync.js":            200,
+		"/books/nope":                404,
+		"/books/demo/ch/0":           404,
+		"/books/demo/ch/3":           404,
+		"/books/demo/ch/x":           404,
+		"/books/demo/audio/9":        404,
+		"/books/demo/cover":          404,
+		"/books/demo/ch/1/../2":      307, // ServeMux cleans paths with a redirect
+		"/books/figures/ch/1":        200,
+		"/books/figures/ch/1/img/0":  200,
+		"/books/figures/ch/1/img/3":  200,
+		"/books/figures/ch/1/img/1":  404, // heading, not a picture
+		"/books/figures/ch/1/img/9":  404,
+		"/books/figures/ch/1/img/x":  404,
+		"/books/figures/ch/1/img/-1": 404,
+		"/books/figures/ch/2/img/0":  404,
+		"/books/demo/ch/1/img/0":     404,
 	}
 	for path, want := range cases {
 		if got := do(s, httptest.NewRequest("GET", path, nil)).Code; got != want {
@@ -67,6 +77,49 @@ func TestReaderRendersEveryWord(t *testing.T) {
 		if !strings.Contains(strings.ToLower(body), strings.ToLower(want)) {
 			t.Errorf("body missing %q", want)
 		}
+	}
+}
+
+func TestReaderRendersPictures(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/figures/ch/1", nil)).Body.String()
+	if n := strings.Count(body, "<figure"); n != 2 {
+		t.Errorf("rendered %d figures, want 2", n)
+	}
+	// Only the captioned picture gets a figcaption; its words stay clickable spans.
+	if n := strings.Count(body, "<figcaption"); n != 1 {
+		t.Errorf("rendered %d figcaptions, want 1", n)
+	}
+	if n := strings.Count(body, "<span data-s="); n != 9 {
+		t.Errorf("rendered %d word spans, want 9", n)
+	}
+	for _, want := range []string{
+		`src="/books/figures/ch/1/img/0"`,
+		`src="/books/figures/ch/1/img/3"`,
+		`has-[span[data-active]]:ring-4`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+	// Block order is kept: the caption follows its picture.
+	if strings.Index(body, "/img/3") > strings.Index(body, `>fox.</span>`) {
+		t.Error("caption rendered before its picture")
+	}
+}
+
+func TestImageServesFile(t *testing.T) {
+	s, _ := newTestServer(t)
+	w := do(s, httptest.NewRequest("GET", "/books/figures/ch/1/img/3", nil))
+	want, err := os.ReadFile("../../testdata/golden-bundle/figures/images/001.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || w.Body.String() != string(want) {
+		t.Fatalf("status %d, %d bytes", w.Code, w.Body.Len())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q", ct)
 	}
 }
 

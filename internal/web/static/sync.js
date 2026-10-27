@@ -22,8 +22,16 @@ document.addEventListener("alpine:init", () => {
     };
 
     const keepInView = (w) => {
-      const r = w.getBoundingClientRect();
       const h = window.innerHeight;
+      // While a picture's caption is read, keep the whole picture on screen
+      // (below the sticky player) if it fits; else follow the word as usual.
+      const fig = w.closest("figure");
+      const f = fig?.getBoundingClientRect();
+      if (f && f.height < h * 0.8) {
+        if (f.top < h * 0.15 || f.bottom > h) fig.scrollIntoView({ block: "center", behavior: "smooth" });
+        return;
+      }
+      const r = w.getBoundingClientRect();
       if (r.top < h * 0.3 || r.bottom > h * 0.7) {
         w.scrollIntoView({ block: "center", behavior: "smooth" });
       }

@@ -17,11 +17,13 @@ func TestScanGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(lib.Books()); n != 1 {
-		t.Fatalf("got %d books, want 1", n)
+	if n := len(lib.Books()); n != 2 {
+		t.Fatalf("got %d books, want 2", n)
 	}
-	if _, ok := lib.Book("demo"); !ok {
-		t.Fatal("demo not found")
+	for _, id := range []string{"demo", "figures"} { // schema v1 and v2
+		if _, ok := lib.Book(id); !ok {
+			t.Fatalf("%s not found", id)
+		}
 	}
 	if _, ok := lib.Book("nope"); ok {
 		t.Fatal("found unknown book")

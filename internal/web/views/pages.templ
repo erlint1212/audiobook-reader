@@ -80,19 +80,26 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 			x-on:click="seek($event)"
 			class="mt-4 text-lg space-y-4 leading-relaxed [&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600"
 		>
-			for _, blk := range a.Blocks {
-				if blk.Kind == bundle.KindHeading {
-					<h2 class="text-xl font-bold">
-						for _, w := range blk.Words {
-							<span data-s={ secs(w.S) }>{ w.T }</span>{ " " }
-						}
-					</h2>
-				} else {
-					<p>
-						for _, w := range blk.Words {
-							<span data-s={ secs(w.S) }>{ w.T }</span>{ " " }
-						}
-					</p>
+			for bi, blk := range a.Blocks {
+				switch blk.Kind {
+					case bundle.KindHeading:
+						<h2 class="text-xl font-bold">
+							@words(blk.Words)
+						</h2>
+					case bundle.KindFigure:
+						// The ring shows while any caption word is active: pure CSS :has().
+						<figure class="rounded-lg p-2 transition-shadow has-[span[data-active]]:ring-4 has-[span[data-active]]:ring-amber-300 dark:has-[span[data-active]]:ring-amber-600">
+							<img src={ imageURL(b.Manifest.ID, ch.Index, bi) } alt="" loading="lazy" class="mx-auto max-h-[70vh] rounded"/>
+							if len(blk.Words) > 0 {
+								<figcaption class="mt-2 text-center text-base italic text-stone-600 dark:text-stone-400">
+									@words(blk.Words)
+								</figcaption>
+							}
+						</figure>
+					default:
+						<p>
+							@words(blk.Words)
+						</p>
 				}
 			}
 		</article>
@@ -109,6 +116,13 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 			<input type="hidden" name="time" x-bind:value="time.toFixed(3)"/>
 		</form>
 	</section>
+}
+
+// words renders one clickable span per word; sync.js highlights them.
+templ words(ws []bundle.Word) {
+	for _, w := range ws {
+		<span data-s={ secs(w.S) }>{ w.T }</span>{ " " }
+	}
 }
 
 templ chapterLink(b bundle.Book, index int, label string) {

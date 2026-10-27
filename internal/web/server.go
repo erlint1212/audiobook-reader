@@ -45,6 +45,7 @@ func New(lib library.Library, store progress.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /books/{id}", s.handleBook)
 	s.mux.HandleFunc("GET /books/{id}/cover", s.handleCover)
 	s.mux.HandleFunc("GET /books/{id}/ch/{n}", s.handleChapter)
+	s.mux.HandleFunc("GET /books/{id}/ch/{n}/img/{b}", s.handleImage)
 	s.mux.HandleFunc("GET /books/{id}/audio/{n}", s.handleAudio)
 	s.mux.HandleFunc("POST /books/{id}/progress", s.handleProgress)
 	return s
@@ -109,6 +110,26 @@ func (s *Server) startTime(r *http.Request, b bundle.Book, ch bundle.Chapter) fl
 		return min(pos.Time, ch.DurationS)
 	}
 	return 0
+}
+
+// handleImage serves the picture of block {b}. The request names only a block
+// index; the path comes from the validated alignment.
+func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
+	b, ch, ok := s.chapter(w, r)
+	if !ok {
+		return
+	}
+	a, err := b.LoadAlignment(ch)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	i, err := strconv.Atoi(r.PathValue("b"))
+	if err != nil || i < 0 || i >= len(a.Blocks) || a.Blocks[i].Kind != bundle.KindFigure {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, b.ImagePath(a.Blocks[i]))
 }
 
 func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {

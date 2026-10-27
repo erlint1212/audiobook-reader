@@ -7,8 +7,15 @@ the bundles this repo reads. The two repos share **nothing but the bundle format
 ## Big picture
 
 ```
-EPUB ──forge──▶ bundle dir (manifest.json, NNN.opus, NNN.align.json) ──reader──▶ browser
+EPUB ──forge──▶ bundle dir (manifest.json, NNN.opus, NNN.align.json, images/) ──reader──▶ browser
 ```
+
+Bundles are schema v1 or v2. v2 adds picture blocks: `{"kind": "fig",
+"image": "images/001.png", "words": [...]}`, where words are the caption
+(else alt text) and may be empty. The reader renders a `<figure>` with the
+image and the words as a `<figcaption>`. While a caption word is active the
+figure gets a ring through Tailwind `has-[span[data-active]]:` (CSS `:has()`),
+so sync.js needs no picture logic beyond keeping the whole figure in view.
 
 The reader scans `-library` once at startup. Each request renders HTML on the
 server (templ). The browser gets one `<span data-s="start">` per word. A small
@@ -30,9 +37,10 @@ Alpine component follows `audio.currentTime` and moves the highlight.
 ## Packages
 
 - `cmd/reader`: flags, wiring, graceful shutdown.
-- `internal/bundle`: Go types for bundle v1, strict decode (`DisallowUnknownFields`), and
+- `internal/bundle`: Go types for bundle v1/v2, strict decode (`DisallowUnknownFields`), and
   semantic checks the JSON Schema cannot express: chapter indexes 1..n, starts
-  never going backwards, `e >= s`, words inside duration, paths staying inside the bundle.
+  never going backwards, `e >= s`, words inside duration, paths staying inside the bundle,
+  `fig` only in v2 with an existing local image, alignment version = manifest version.
 - `internal/library`: immutable index built by `Scan`. Bad bundles get logged and
   skipped; duplicate ids are a hard error.
 - `internal/progress`: per-book position store.
@@ -48,21 +56,24 @@ Alpine component follows `audio.currentTime` and moves the highlight.
 | `GET /books/{id}/ch/{n}[?t=sec]` | reader; with `HX-Request: true` returns only `<section id="reader">` |
 | `GET /books/{id}/audio/{n}` | audio via `http.ServeContent` (Range → 206, needed for seeking) |
 | `GET /books/{id}/cover` | cover image if the manifest has one |
+| `GET /books/{id}/ch/{n}/img/{b}` | image of picture block `b` (0-based block index); 404 if not a `fig` |
 | `POST /books/{id}/progress` | form `chapter`, `time` → 204 |
 
 ## Rules for working in this repo
 
-1. **The bundle format is a contract.** `schema/bundle.v1.schema.json` and
+1. **The bundle format is a contract.** `schema/bundle.v*.schema.json` and
    `testdata/golden-bundle/` must stay byte-identical with audiobook-forge.
-   A breaking change means `schema_version: 2` in both repos, plus a reader that
-   still loads v1.
+   Golden `demo` is v1, `figures` is v2 (pictures). A breaking change means a
+   new `schema_version` in both repos, plus a reader that still loads the old ones
+   (`MinSchemaVersion`..`SchemaVersion`).
 2. **Server renders, client syncs.** New UI is templ + HTMX first. Add JS only
    if it must run every frame or touch media APIs, and put it in
    `static/sync.js`. No JS build step, no npm.
 3. **Tailwind only.** No hand-written CSS rules. Style state through attributes
    (`data-active`) and Tailwind arbitrary variants, as `Reader` does.
 4. **Never build a file path from request input.** Paths come from the
-   validated manifest only (`Book.AudioPath`, `CoverPath`).
+   validated manifest/alignment only (`Book.AudioPath`, `CoverPath`, `ImagePath`);
+   requests carry indexes, never paths.
 5. **Library and Server are immutable after construction.** No locks, no
    globals. Restart the server to pick up new books.
 6. **Generated `*_templ.go` files are committed.** Run `make generate` after

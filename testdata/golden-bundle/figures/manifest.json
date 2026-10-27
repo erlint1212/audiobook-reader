@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "id": "figures",
+  "title": "Picture Book",
+  "author": "Test Author",
+  "language": "en",
+  "voice": "narrator.wav",
+  "created": "2026-10-27T12:00:00Z",
+  "chapters": [
+    {
+      "index": 1,
+      "title": "Chapter One",
+      "audio": "chapters/001.opus",
+      "alignment": "chapters/001.align.json",
+      "duration_s": 5.0
+    }
+  ]
+}
