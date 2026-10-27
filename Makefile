@@ -1,7 +1,7 @@
 # Everything runs inside `nix develop`. CGO is off: the build is pure Go.
 export CGO_ENABLED := 0
 
-LIBRARY ?= ./testdata/golden-bundle
+LIBRARY ?= ../audiobook-forge/library/
 CSS_IN  := internal/web/static/input.css
 CSS_OUT := internal/web/static/app.css
 
