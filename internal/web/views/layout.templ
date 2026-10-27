@@ -1,0 +1,33 @@
+package views
+
+// Pinned CDN versions. Bump deliberately; htmx 4 renamed several attributes.
+const (
+	htmxSrc   = "https://cdn.jsdelivr.net/npm/htmx.org@4.0.0/dist/htmx.min.js"
+	alpineSrc = "https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"
+)
+
+templ Layout(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title }</title>
+			<link rel="stylesheet" href="/static/app.css"/>
+			<script src={ htmxSrc }></script>
+			<!-- sync.js registers the Alpine component on alpine:init, so it must load before Alpine. -->
+			<script src="/static/sync.js"></script>
+			<script defer src={ alpineSrc }></script>
+		</head>
+		<body class="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-900 dark:text-stone-100">
+			<header class="border-b border-stone-200 dark:border-stone-700">
+				<nav class="mx-auto max-w-3xl px-4 py-3">
+					<a href="/" class="font-semibold hover:underline">Library</a>
+				</nav>
+			</header>
+			<main class="mx-auto max-w-3xl px-4 py-6">
+				{ children... }
+			</main>
+		</body>
+	</html>
+}

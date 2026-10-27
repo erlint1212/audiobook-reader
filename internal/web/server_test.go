@@ -1,0 +1,138 @@
+package web
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"audiobook-reader/internal/library"
+	"audiobook-reader/internal/progress"
+)
+
+func newTestServer(t *testing.T) (*Server, progress.Store) {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lib, err := library.Scan("../../testdata/golden-bundle", log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := progress.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(lib, store, log), store
+}
+
+func do(s *Server, r *http.Request) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	return w
+}
+
+func TestRoutesStatus(t *testing.T) {
+	s, _ := newTestServer(t)
+	cases := map[string]int{
+		"/":                     200,
+		"/books/demo":           200,
+		"/books/demo/ch/1":      200,
+		"/books/demo/ch/2":      200,
+		"/books/demo/audio/1":   200,
+		"/static/sync.js":       200,
+		"/books/nope":           404,
+		"/books/demo/ch/0":      404,
+		"/books/demo/ch/3":      404,
+		"/books/demo/ch/x":      404,
+		"/books/demo/audio/9":   404,
+		"/books/demo/cover":     404,
+		"/books/demo/ch/1/../2": 307, // ServeMux cleans paths with a redirect
+	}
+	for path, want := range cases {
+		if got := do(s, httptest.NewRequest("GET", path, nil)).Code; got != want {
+			t.Errorf("GET %s = %d, want %d", path, got, want)
+		}
+	}
+}
+
+func TestReaderRendersEveryWord(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	if n := strings.Count(body, "<span data-s="); n != 6 {
+		t.Errorf("rendered %d word spans, want 6", n)
+	}
+	for _, want := range []string{`data-s="1.000">Hello,</span>`, `<!doctype html>`, `x-data="reader"`} {
+		if !strings.Contains(strings.ToLower(body), strings.ToLower(want)) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+func TestHTMXFragment(t *testing.T) {
+	s, _ := newTestServer(t)
+	r := httptest.NewRequest("GET", "/books/demo/ch/2", nil)
+	r.Header.Set("HX-Request", "true")
+	body := do(s, r).Body.String()
+	if strings.Contains(strings.ToLower(body), "<!doctype") {
+		t.Error("fragment response contains full page")
+	}
+	if !strings.HasPrefix(strings.TrimSpace(body), `<section id="reader"`) {
+		t.Errorf("fragment does not start with reader section: %.80q", body)
+	}
+}
+
+func TestAudioRange(t *testing.T) {
+	s, _ := newTestServer(t)
+	r := httptest.NewRequest("GET", "/books/demo/audio/1", nil)
+	r.Header.Set("Range", "bytes=0-3")
+	w := do(s, r)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", w.Code)
+	}
+	if w.Body.String() != "OggS" {
+		t.Errorf("body = %q, want OggS", w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "audio/ogg" {
+		t.Errorf("content-type = %q", ct)
+	}
+}
+
+func TestProgressSaveAndResume(t *testing.T) {
+	s, store := newTestServer(t)
+	post := func(form url.Values) int {
+		r := httptest.NewRequest("POST", "/books/demo/progress", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return do(s, r).Code
+	}
+	for _, bad := range []url.Values{
+		{"chapter": {"9"}, "time": {"1"}},
+		{"chapter": {"1"}, "time": {"-1"}},
+		{"chapter": {"1"}, "time": {"NaN"}},
+		{"chapter": {"x"}, "time": {"1"}},
+	} {
+		if code := post(bad); code != http.StatusBadRequest {
+			t.Errorf("POST %v = %d, want 400", bad, code)
+		}
+	}
+	if code := post(url.Values{"chapter": {"1"}, "time": {"2.5"}}); code != http.StatusNoContent {
+		t.Fatalf("POST valid = %d", code)
+	}
+	pos, ok, err := store.Get("demo")
+	if err != nil || !ok || pos.Chapter != 1 || pos.Time != 2.5 {
+		t.Fatalf("stored %+v ok %v err %v", pos, ok, err)
+	}
+	book := do(s, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	if !strings.Contains(book, "/books/demo/ch/1?t=2.500") {
+		t.Error("book page missing resume link")
+	}
+	ch := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	if !strings.Contains(ch, `data-start="2.500"`) {
+		t.Error("chapter did not resume from saved time")
+	}
+	ch = do(s, httptest.NewRequest("GET", "/books/demo/ch/1?t=99", nil)).Body.String()
+	if !strings.Contains(ch, `data-start="4.000"`) {
+		t.Error("?t= past duration not clamped")
+	}
+}

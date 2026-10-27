@@ -1,0 +1,127 @@
+package views
+
+import (
+	"audiobook-reader/internal/bundle"
+	"audiobook-reader/internal/progress"
+)
+
+templ LibraryPage(books []bundle.Book) {
+	@Layout("Library") {
+		<h1 class="mb-6 text-2xl font-bold">Library</h1>
+		if len(books) == 0 {
+			<p class="text-stone-500">No books found. Point <code>-library</code> at a folder of forge bundles.</p>
+		}
+		<ul class="grid gap-4 sm:grid-cols-2">
+			for _, b := range books {
+				<li>
+					<a href={ bookURL(b.Manifest.ID) } class="block rounded-lg border border-stone-200 p-4 hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800">
+						if b.Manifest.Cover != "" {
+							<img src={ coverURL(b.Manifest.ID) } alt="" class="mb-3 aspect-[2/3] w-full rounded object-cover"/>
+						}
+						<div class="font-semibold">{ b.Manifest.Title }</div>
+						<div class="text-sm text-stone-500">{ b.Manifest.Author }</div>
+					</a>
+				</li>
+			}
+		</ul>
+	}
+}
+
+templ BookPage(b bundle.Book, pos progress.Position, hasPos bool) {
+	@Layout(b.Manifest.Title) {
+		<h1 class="text-2xl font-bold">{ b.Manifest.Title }</h1>
+		<p class="mb-6 text-stone-500">{ b.Manifest.Author }</p>
+		if hasPos {
+			<a href={ resumeURL(b.Manifest.ID, pos) } class="mb-6 inline-block rounded bg-amber-500 px-4 py-2 font-semibold text-stone-900 hover:bg-amber-400">
+				Resume chapter { itoa(pos.Chapter) } at { clock(pos.Time) }
+			</a>
+		}
+		<ol class="divide-y divide-stone-200 dark:divide-stone-700">
+			for _, ch := range b.Manifest.Chapters {
+				<li>
+					<a href={ chapterURL(b.Manifest.ID, ch.Index) } class="flex justify-between py-2 hover:underline">
+						<span>{ ch.Title }</span>
+						<span class="text-sm text-stone-500 tabular-nums">{ clock(ch.DurationS) }</span>
+					</a>
+				</li>
+			}
+		</ol>
+	}
+}
+
+templ ReaderPage(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64) {
+	@Layout(ch.Title + " · " + b.Manifest.Title) {
+		@Reader(b, ch, a, start)
+	}
+}
+
+// Reader is also returned alone as an htmx fragment when switching chapters.
+// All per-word styling lives here; sync.js only toggles data-active.
+templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64) {
+	<section
+		id="reader"
+		x-data="reader"
+		data-start={ secs(start) }
+		data-chapter={ itoa(ch.Index) }
+		x-on:keydown.window="key($event)"
+		x-on:wheel.window="follow = false"
+		x-on:touchmove.window="follow = false"
+	>
+		<div class="sticky top-0 z-10 -mx-4 bg-stone-50/95 px-4 py-3 backdrop-blur dark:bg-stone-900/95">
+			<div class="mb-2 flex items-center justify-between gap-2 text-sm">
+				@chapterLink(b, ch.Index-1, "← Prev")
+				<a href={ bookURL(b.Manifest.ID) } class="truncate font-semibold hover:underline">{ ch.Title }</a>
+				@chapterLink(b, ch.Index+1, "Next →")
+			</div>
+			<audio x-ref="audio" src={ audioURL(b.Manifest.ID, ch.Index) } preload="metadata" controls class="w-full"></audio>
+		</div>
+		<article
+			x-ref="text"
+			x-on:click="seek($event)"
+			class="mt-4 text-lg space-y-4 leading-relaxed [&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600"
+		>
+			for _, blk := range a.Blocks {
+				if blk.Kind == bundle.KindHeading {
+					<h2 class="text-xl font-bold">
+						for _, w := range blk.Words {
+							<span data-s={ secs(w.S) }>{ w.T }</span>{ " " }
+						}
+					</h2>
+				} else {
+					<p>
+						for _, w := range blk.Words {
+							<span data-s={ secs(w.S) }>{ w.T }</span>{ " " }
+						}
+					</p>
+				}
+			}
+		</article>
+		<button
+			type="button"
+			x-show="!follow"
+			x-on:click="resumeFollow()"
+			class="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-full bg-amber-500 px-4 py-2 font-semibold text-stone-900 shadow-lg hover:bg-amber-400"
+		>
+			Back to reading position
+		</button>
+		<form x-ref="pos" hx-post={ progressURL(b.Manifest.ID) } hx-trigger="savepos" hx-swap="none" class="hidden">
+			<input type="hidden" name="chapter" value={ itoa(ch.Index) }/>
+			<input type="hidden" name="time" x-bind:value="time.toFixed(3)"/>
+		</form>
+	</section>
+}
+
+templ chapterLink(b bundle.Book, index int, label string) {
+	if index >= 1 && index <= len(b.Manifest.Chapters) {
+		<a
+			href={ chapterURL(b.Manifest.ID, index) }
+			hx-get={ string(chapterURL(b.Manifest.ID, index)) }
+			hx-target="#reader"
+			hx-swap="outerHTML"
+			hx-push-url="true"
+			class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
+		>{ label }</a>
+	} else {
+		<span class="px-2 py-1 text-stone-400">{ label }</span>
+	}
+}

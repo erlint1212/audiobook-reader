@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "demo",
+  "title": "Demo Book",
+  "author": "Test Author",
+  "language": "en",
+  "voice": "narrator.wav",
+  "created": "2026-10-26T12:00:00Z",
+  "chapters": [
+    {
+      "index": 1,
+      "title": "Chapter One",
+      "audio": "chapters/001.opus",
+      "alignment": "chapters/001.align.json",
+      "duration_s": 4.0
+    },
+    {
+      "index": 2,
+      "title": "Chapter Two",
+      "audio": "chapters/002.opus",
+      "alignment": "chapters/002.align.json",
+      "duration_s": 2.0
+    }
+  ]
+}
