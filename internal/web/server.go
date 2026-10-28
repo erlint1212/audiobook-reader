@@ -26,15 +26,16 @@ import (
 var staticFS embed.FS
 
 // Server is immutable after New; all handlers are safe for concurrent use.
+// The Shelf it holds swaps in a new Library on refresh.
 type Server struct {
-	lib   library.Library
+	lib   *library.Shelf
 	store progress.Store
 	log   *slog.Logger
 	mux   *http.ServeMux
 }
 
 // New builds the router.
-func New(lib library.Library, store progress.Store, log *slog.Logger) *Server {
+func New(lib *library.Shelf, store progress.Store, log *slog.Logger) *Server {
 	s := &Server{lib: lib, store: store, log: log, mux: http.NewServeMux()}
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -48,13 +49,54 @@ func New(lib library.Library, store progress.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /books/{id}/ch/{n}/img/{b}", s.handleImage)
 	s.mux.HandleFunc("GET /books/{id}/audio/{n}", s.handleAudio)
 	s.mux.HandleFunc("POST /books/{id}/progress", s.handleProgress)
+	s.mux.HandleFunc("POST /refresh", s.handleRefreshLibrary)
+	s.mux.HandleFunc("POST /books/{id}/refresh", s.handleRefreshBook)
+	s.mux.HandleFunc("GET /books/{id}/ch/{n}/next", s.handleNextLink)
 	return s
+}
+
+// handleRefreshLibrary rescans the library, then goes back to the grid.
+func (s *Server) handleRefreshLibrary(w http.ResponseWriter, r *http.Request) {
+	if err := s.lib.Refresh(); err != nil {
+		s.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleRefreshBook rescans the library, then goes back to the chapter list.
+// The redirect uses the manifest id, never the raw path value.
+func (s *Server) handleRefreshBook(w http.ResponseWriter, r *http.Request) {
+	if err := s.lib.Refresh(); err != nil {
+		s.fail(w, err)
+		return
+	}
+	b, ok := s.book(w, r)
+	if !ok {
+		return
+	}
+	http.Redirect(w, r, "/books/"+b.Manifest.ID, http.StatusSeeOther)
+}
+
+// handleNextLink is polled by the reader on the last known chapter. It
+// rescans and returns the "Next →" link, live once forge has written the
+// next chapter, else the same polling placeholder again. A failed rescan
+// keeps the current library: an error body must not land in the top bar.
+func (s *Server) handleNextLink(w http.ResponseWriter, r *http.Request) {
+	if err := s.lib.Refresh(); err != nil {
+		s.log.Warn("refresh", "err", err)
+	}
+	b, ch, ok := s.chapter(w, r)
+	if !ok {
+		return
+	}
+	s.render(w, r, views.NextLink(b, ch.Index))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
 func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, views.LibraryPage(s.lib.Books()))
+	s.render(w, r, views.LibraryPage(s.lib.Get().Books()))
 }
 
 func (s *Server) handleBook(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +220,7 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) book(w http.ResponseWriter, r *http.Request) (bundle.Book, bool) {
-	b, ok := s.lib.Book(r.PathValue("id"))
+	b, ok := s.lib.Get().Book(r.PathValue("id"))
 	if !ok {
 		http.NotFound(w, r)
 	}

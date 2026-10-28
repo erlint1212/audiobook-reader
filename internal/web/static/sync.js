@@ -25,6 +25,9 @@ document.addEventListener("alpine:init", () => {
     let current = -1;
     let frame = 0;
     let lastSave = 0;
+    // Set when the last known chapter ended. If the polled "Next →" link
+    // shows up later (forge wrote another chapter), nextReady() goes on.
+    let waiting = false;
 
     // Last index whose start <= t, or -1 before the first word.
     const indexAt = (t) => {
@@ -72,7 +75,7 @@ document.addEventListener("alpine:init", () => {
         }
         this.setSpeed(loadSpeed());
         audio.addEventListener("durationchange", () => { this.duration = audio.duration; });
-        audio.addEventListener("play", () => { this.playing = true; this.loop(); });
+        audio.addEventListener("play", () => { waiting = false; this.playing = true; this.loop(); });
         audio.addEventListener("pause", () => { this.playing = false; this.tick(); this.save(); });
         audio.addEventListener("seeked", () => this.tick());
         audio.addEventListener("ended", () => this.next());
@@ -84,12 +87,21 @@ document.addEventListener("alpine:init", () => {
       },
 
       // Chapter done: follow the server-rendered "Next →" link (htmx swaps
-      // #reader) and let the new reader start itself. Last chapter: stop.
+      // #reader) and let the new reader start itself. Last known chapter:
+      // stop, and wait for the polled link (see nextReady).
       next() {
         const link = this.$el.querySelector("a[rel=next]");
-        if (!link) return;
+        if (!link) { waiting = true; return; }
+        waiting = false;
         autoplay = true;
         link.click();
+      },
+
+      // x-init of the live "Next →" link. Runs on every render; acts only if
+      // the chapter already ended. setTimeout lets htmx finish processing the
+      // swapped-in link before it is clicked.
+      nextReady() {
+        if (waiting) setTimeout(() => this.next(), 0);
       },
 
       toggle() {

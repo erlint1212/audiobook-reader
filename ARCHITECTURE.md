@@ -17,7 +17,8 @@ image and the words as a `<figcaption>`. While a caption word is active the
 figure gets a ring through Tailwind `has-[span[data-active]]:` (CSS `:has()`),
 so sync.js needs no picture logic beyond keeping the whole figure in view.
 
-The reader scans `-library` once at startup. Each request renders HTML on the
+The reader scans `-library` at startup and again on refresh (Refresh buttons
+on the library and book pages, and the reader's last-chapter poll). Each request renders HTML on the
 server (templ). The browser gets one `<span data-s="start">` per word. A small
 Alpine component follows `audio.currentTime` and moves the highlight.
 
@@ -31,7 +32,11 @@ Auto-scroll keeps the word inside the band between the sticky top bar
 (`x-ref="top"`) and the player bar; the article has `pb-[40vh]` so the last lines
 can rise above the bar. When a chapter ends, sync.js clicks `a[rel=next]` (the
 normal htmx "Next →" link) and the swapped-in reader starts playing by itself.
-The last chapter has no `rel=next`, so playback just stops.
+The last known chapter has no `rel=next`, so playback stops. There "Next →"
+is a placeholder that polls `GET /books/{id}/ch/{n}/next` every 30s; the server
+rescans and, once forge has written chapter n+1, returns the live link. Its
+`x-init="nextReady()"` lets a reader that already hit the end go on by itself,
+so you can listen while forge is still generating.
 
 ## Stack and why
 
@@ -54,7 +59,9 @@ The last chapter has no `rel=next`, so playback just stops.
   never going backwards, `e >= s`, words inside duration, paths staying inside the bundle,
   `fig` only in v2 with an existing local image, alignment version = manifest version.
 - `internal/library`: immutable index built by `Scan`. Bad bundles get logged and
-  skipped; duplicate ids are a hard error.
+  skipped; duplicate ids are a hard error. `Shelf` holds the current `Library`
+  in an `atomic.Pointer`; `Refresh` builds a new one and swaps it in. On refresh
+  a bundle that fails to load (forge mid-write) keeps its last good version.
 - `internal/progress`: per-book position store.
 - `internal/web`: handlers + routes. `views/` holds templ components and
   `static/` holds `sync.js` + Tailwind input.
@@ -70,6 +77,9 @@ The last chapter has no `rel=next`, so playback just stops.
 | `GET /books/{id}/cover` | cover image if the manifest has one |
 | `GET /books/{id}/ch/{n}/img/{b}` | image of picture block `b` (0-based block index); 404 if not a `fig` |
 | `POST /books/{id}/progress` | form `chapter`, `time` → 204 |
+| `POST /refresh` | rescan library → 303 `/` |
+| `POST /books/{id}/refresh` | rescan library → 303 `/books/{id}` |
+| `GET /books/{id}/ch/{n}/next` | rescan, return the "Next →" fragment (live link or polling placeholder) |
 
 ## Rules for working in this repo
 
@@ -86,8 +96,9 @@ The last chapter has no `rel=next`, so playback just stops.
 4. **Never build a file path from request input.** Paths come from the
    validated manifest/alignment only (`Book.AudioPath`, `CoverPath`, `ImagePath`);
    requests carry indexes, never paths.
-5. **Library and Server are immutable after construction.** No locks, no
-   globals. Restart the server to pick up new books.
+5. **Library and Server are immutable after construction.** No globals. The
+   only mutable thing is `library.Shelf`, which swaps whole Libraries
+   atomically; never mutate a Library in place.
 6. **Generated `*_templ.go` files are committed.** Run `make generate` after
    editing `.templ`; `make check` fails if they are stale.
 7. **Every fix or feature gets a test.** Handler tests use the golden bundle via

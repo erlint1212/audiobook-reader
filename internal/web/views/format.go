@@ -40,3 +40,7 @@ func imageURL(id string, ch, block int) string {
 func resumeURL(id string, p progress.Position) templ.SafeURL {
 	return templ.URL(fmt.Sprintf("/books/%s/ch/%d?t=%s", id, p.Chapter, secs(p.Time)))
 }
+
+func refreshURL(id string) string { return "/books/" + id + "/refresh" }
+
+func nextURL(id string, ch int) string { return fmt.Sprintf("/books/%s/ch/%d/next", id, ch) }

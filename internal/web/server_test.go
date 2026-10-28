@@ -1,12 +1,14 @@
 package web
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,7 +19,7 @@ import (
 func newTestServer(t *testing.T) (*Server, progress.Store) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	lib, err := library.Scan("../../testdata/golden-bundle", log)
+	lib, err := library.Open("../../testdata/golden-bundle", log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,5 +222,94 @@ func TestProgressSaveAndResume(t *testing.T) {
 	ch = do(s, httptest.NewRequest("GET", "/books/demo/ch/1?t=99", nil)).Body.String()
 	if !strings.Contains(ch, `data-start="4.000"`) {
 		t.Error("?t= past duration not clamped")
+	}
+}
+
+func TestRefreshRedirectsBack(t *testing.T) {
+	s, _ := newTestServer(t)
+	cases := map[string]string{
+		"/refresh":            "/",
+		"/books/demo/refresh": "/books/demo",
+	}
+	for path, want := range cases {
+		w := do(s, httptest.NewRequest("POST", path, nil))
+		if w.Code != http.StatusSeeOther || w.Header().Get("Location") != want {
+			t.Errorf("POST %s = %d %q, want 303 %q", path, w.Code, w.Header().Get("Location"), want)
+		}
+	}
+	if got := do(s, httptest.NewRequest("POST", "/books/nope/refresh", nil)).Code; got != 404 {
+		t.Errorf("POST unknown book refresh = %d, want 404", got)
+	}
+	for page, action := range cases {
+		if body := do(s, httptest.NewRequest("GET", action, nil)).Body.String(); !strings.Contains(body, `action="`+page+`"`) {
+			t.Errorf("%s has no refresh form posting to %s", action, page)
+		}
+	}
+}
+
+// The last chapter polls for more. Once forge adds one, the poll returns
+// the live next link and the chapter list shows it.
+func TestNextLinkAppearsWhenChapterAdded(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	root := t.TempDir()
+	dir := filepath.Join(root, "demo")
+	if err := os.CopyFS(dir, os.DirFS("../../testdata/golden-bundle/demo")); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(dir, "manifest.json")
+	full, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(full, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["chapters"] = m["chapters"].([]any)[:1]
+	short, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifest, short, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := library.Open(root, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := progress.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(lib, store, log)
+
+	page := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	for _, want := range []string{`hx-get="/books/demo/ch/1/next"`, `hx-trigger="every 30s"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("last chapter missing %q", want)
+		}
+	}
+	if strings.Contains(page, `rel="next"`) {
+		t.Error("last chapter renders a next link")
+	}
+	poll := do(s, httptest.NewRequest("GET", "/books/demo/ch/1/next", nil)).Body.String()
+	if strings.Contains(poll, `rel="next"`) || !strings.Contains(poll, `hx-trigger="every 30s"`) {
+		t.Errorf("poll before new chapter should return placeholder, got %q", poll)
+	}
+
+	if err := os.WriteFile(manifest, full, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	poll = do(s, httptest.NewRequest("GET", "/books/demo/ch/1/next", nil)).Body.String()
+	for _, want := range []string{`rel="next"`, `href="/books/demo/ch/2"`, `x-init="nextReady()"`} {
+		if !strings.Contains(poll, want) {
+			t.Errorf("poll after new chapter missing %q: %q", want, poll)
+		}
+	}
+	if strings.Contains(poll, "every 30s") {
+		t.Error("live link still polls")
+	}
+	if got := do(s, httptest.NewRequest("GET", "/books/demo/ch/2", nil)).Code; got != 200 {
+		t.Errorf("new chapter = %d, want 200", got)
 	}
 }

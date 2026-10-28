@@ -31,7 +31,7 @@ func main() {
 }
 
 func run(addr, libDir, dataDir string, log *slog.Logger) error {
-	lib, err := library.Scan(libDir, log)
+	lib, err := library.Open(libDir, log)
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func run(addr, libDir, dataDir string, log *slog.Logger) error {
 		_ = srv.Shutdown(shutdown)
 	}()
 
-	log.Info("listening", "addr", "http://"+addr, "books", len(lib.Books()))
+	log.Info("listening", "addr", "http://"+addr, "books", len(lib.Get().Books()))
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

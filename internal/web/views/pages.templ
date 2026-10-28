@@ -7,7 +7,10 @@ import (
 
 templ LibraryPage(books []bundle.Book) {
 	@Layout("Library") {
-		<h1 class="mb-6 text-2xl font-bold">Library</h1>
+		<div class="mb-6 flex items-center justify-between">
+			<h1 class="text-2xl font-bold">Library</h1>
+			@refreshButton("/refresh")
+		</div>
 		if len(books) == 0 {
 			<p class="text-stone-500">No books found. Point <code>-library</code> at a folder of forge bundles.</p>
 		}
@@ -29,7 +32,10 @@ templ LibraryPage(books []bundle.Book) {
 
 templ BookPage(b bundle.Book, pos progress.Position, hasPos bool) {
 	@Layout(b.Manifest.Title) {
-		<h1 class="text-2xl font-bold">{ b.Manifest.Title }</h1>
+		<div class="flex items-center justify-between gap-4">
+			<h1 class="text-2xl font-bold">{ b.Manifest.Title }</h1>
+			@refreshButton(refreshURL(b.Manifest.ID))
+		</div>
 		<p class="mb-6 text-stone-500">{ b.Manifest.Author }</p>
 		if hasPos {
 			<a href={ resumeURL(b.Manifest.ID, pos) } class="mb-6 inline-block rounded bg-amber-500 px-4 py-2 font-semibold text-stone-900 hover:bg-amber-400">
@@ -71,7 +77,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 			<div class="flex items-center justify-between gap-2 text-sm">
 				@chapterLink(b, ch.Index-1, "← Prev", "prev")
 				<a href={ bookURL(b.Manifest.ID) } class="truncate font-semibold hover:underline">{ ch.Title }</a>
-				@chapterLink(b, ch.Index+1, "Next →", "next")
+				@NextLink(b, ch.Index)
 			</div>
 		</div>
 		// pb-[40vh] lets the last lines scroll up past the fixed player bar.
@@ -196,6 +202,35 @@ templ speedControl() {
 			class="w-12 rounded px-1 text-left hover:bg-stone-200 dark:hover:bg-stone-700"
 		>1.0×</button>
 	</div>
+}
+
+// refreshButton rescans the library on the server, which redirects back.
+templ refreshButton(action string) {
+	<form method="post" action={ templ.SafeURL(action) }>
+		<button type="submit" class="rounded border border-stone-300 px-3 py-1 text-sm hover:bg-stone-200 dark:border-stone-600 dark:hover:bg-stone-700">
+			Refresh
+		</button>
+	</form>
+}
+
+// NextLink is the reader's "Next →". On the last known chapter it is a
+// placeholder that polls the server, which rescans; once forge has written
+// the next chapter the live link swaps in. Its x-init tells the reader, so a
+// listener who already reached the end keeps going. Also an htmx fragment.
+templ NextLink(b bundle.Book, cur int) {
+	if cur < len(b.Manifest.Chapters) {
+		<span class="contents" x-init="nextReady()">
+			@chapterLink(b, cur+1, "Next →", "next")
+		</span>
+	} else {
+		<span
+			hx-get={ nextURL(b.Manifest.ID, cur) }
+			hx-trigger="every 30s"
+			hx-swap="outerHTML"
+			title="Last chapter so far; checking for more"
+			class="px-2 py-1 text-stone-400"
+		>Next →</span>
+	}
 }
 
 // rel ("prev"/"next") also lets sync.js find the next link to auto-advance.
