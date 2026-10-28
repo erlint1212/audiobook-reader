@@ -121,6 +121,9 @@ func TestReaderPlayerAndNextLink(t *testing.T) {
 		`rel="next"`,
 		`href="/books/demo/ch/2"`,
 		`pb-[40vh]`, // last lines can scroll above the fixed bar
+		`aria-label="Playback speed"`,
+		`x-on:input="setSpeed($event.target.value)"`,
+		`x-on:click="setSpeed(1)"`,
 	} {
 		if !strings.Contains(first, want) {
 			t.Errorf("ch 1 missing %q", want)

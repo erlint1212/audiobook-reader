@@ -22,7 +22,11 @@ server (templ). The browser gets one `<span data-s="start">` per word. A small
 Alpine component follows `audio.currentTime` and moves the highlight.
 
 The player is a custom bar fixed to the bottom (`x-ref="bar"`): seek slider,
-−10s, play/pause, +10s. The `<audio>` is hidden (no native `controls`).
+−10s, play/pause, +10s, and a speed slider (0.5×–3×; click the label to reset
+to 1×). The `<audio>` is hidden (no native `controls`). Speed is kept in
+`localStorage` (`reader.speed`) because it is a per-browser preference, not
+book progress. It carries across chapters, and if storage is blocked it falls
+back to 1×.
 Auto-scroll keeps the word inside the band between the sticky top bar
 (`x-ref="top"`) and the player bar; the article has `pb-[40vh]` so the last lines
 can rise above the bar. When a chapter ends, sync.js clicks `a[rel=next]` (the

@@ -7,6 +7,17 @@ document.addEventListener("alpine:init", () => {
   // init() and starts playing. Shared across instances, so it lives out here.
   let autoplay = false;
 
+  // Playback speed carries across chapters and reloads. Storage can be
+  // blocked (private window); then speed just resets to 1x on reload.
+  const SPEED_KEY = "reader.speed";
+  const clampSpeed = (r) => Math.min(3, Math.max(0.5, Number(r) || 1));
+  const loadSpeed = () => {
+    try { return clampSpeed(localStorage.getItem(SPEED_KEY)); } catch { return 1; }
+  };
+  const storeSpeed = (r) => {
+    try { localStorage.setItem(SPEED_KEY, String(r)); } catch { /* ignore */ }
+  };
+
   Alpine.data("reader", () => {
     // Non-reactive state: DOM nodes and big arrays stay out of Alpine proxies.
     let words = [];
@@ -49,6 +60,7 @@ document.addEventListener("alpine:init", () => {
       time: 0,
       duration: 0,
       playing: false,
+      speed: 1,
 
       init() {
         words = Array.from(this.$refs.text.querySelectorAll("span[data-s]"));
@@ -58,6 +70,7 @@ document.addEventListener("alpine:init", () => {
         if (start > 0) {
           audio.addEventListener("loadedmetadata", () => { audio.currentTime = start; }, { once: true });
         }
+        this.setSpeed(loadSpeed());
         audio.addEventListener("durationchange", () => { this.duration = audio.duration; });
         audio.addEventListener("play", () => { this.playing = true; this.loop(); });
         audio.addEventListener("pause", () => { this.playing = false; this.tick(); this.save(); });
@@ -92,6 +105,16 @@ document.addEventListener("alpine:init", () => {
 
       scrub(e) {
         this.$refs.audio.currentTime = Number(e.target.value);
+      },
+
+      // Slider input, or 1 from the reset button. defaultPlaybackRate keeps
+      // the rate if the media reloads. Browsers keep pitch natural by default.
+      setSpeed(r) {
+        this.speed = clampSpeed(r);
+        const audio = this.$refs.audio;
+        audio.defaultPlaybackRate = this.speed;
+        audio.playbackRate = this.speed;
+        storeSpeed(this.speed);
       },
 
       // m:ss, or h:mm:ss for long chapters.

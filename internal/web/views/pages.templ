@@ -130,18 +130,23 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 					/>
 					<span x-text="clock(duration)" class="w-12">0:00</span>
 				</div>
-				<div class="mt-2 flex items-center justify-center gap-6">
-					@skipButton(-10, "Back 10 seconds", "−10s")
-					<button
-						type="button"
-						aria-label="Play or pause"
-						x-on:click="toggle()"
-						x-bind:aria-pressed="playing"
-						class="flex size-14 items-center justify-center rounded-full bg-amber-500 text-xl font-bold text-stone-900 shadow hover:bg-amber-400 active:scale-95"
-					>
-						<span x-text="playing ? '❚❚' : '▶'">▶</span>
-					</button>
-					@skipButton(10, "Forward 10 seconds", "+10s")
+				// Three columns keep play/pause centred, speed control on the right.
+				<div class="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+					<div></div>
+					<div class="flex items-center gap-6">
+						@skipButton(-10, "Back 10 seconds", "−10s")
+						<button
+							type="button"
+							aria-label="Play or pause"
+							x-on:click="toggle()"
+							x-bind:aria-pressed="playing"
+							class="flex size-14 items-center justify-center rounded-full bg-amber-500 text-xl font-bold text-stone-900 shadow hover:bg-amber-400 active:scale-95"
+						>
+							<span x-text="playing ? '❚❚' : '▶'">▶</span>
+						</button>
+						@skipButton(10, "Forward 10 seconds", "+10s")
+					</div>
+					@speedControl()
 				</div>
 			</div>
 		</div>
@@ -167,6 +172,30 @@ templ skipButton(secs int, aria string, label string) {
 		x-on:click={ "skip(" + itoa(secs) + ")" }
 		class="flex size-11 items-center justify-center rounded-full text-sm font-semibold hover:bg-stone-200 active:scale-95 dark:hover:bg-stone-700"
 	>{ label }</button>
+}
+
+// speedControl sets audio.playbackRate, 0.5x to 3x. The label shows the
+// rate; clicking it resets to 1x.
+templ speedControl() {
+	<div class="flex items-center justify-end gap-2 text-sm tabular-nums text-stone-500">
+		<input
+			type="range"
+			min="0.5"
+			max="3"
+			step="0.1"
+			aria-label="Playback speed"
+			x-bind:value="speed"
+			x-on:input="setSpeed($event.target.value)"
+			class="h-1 w-20 cursor-pointer accent-amber-500 sm:w-28"
+		/>
+		<button
+			type="button"
+			aria-label="Reset speed to 1x"
+			x-on:click="setSpeed(1)"
+			x-text="speed.toFixed(1) + '×'"
+			class="w-12 rounded px-1 text-left hover:bg-stone-200 dark:hover:bg-stone-700"
+		>1.0×</button>
+	</div>
 }
 
 // rel ("prev"/"next") also lets sync.js find the next link to auto-advance.
