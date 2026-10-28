@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:8080", "listen address")
+	addr := flag.String("addr", "127.0.0.1:8090", "listen address")
 	libDir := flag.String("library", "./library", "directory of forge bundles")
 	dataDir := flag.String("data", defaultDataDir(), "directory for listening progress")
 	flag.Parse()
