@@ -3,6 +3,10 @@
 // follows audio.currentTime, marks the current word with data-active
 // (styled by Tailwind in the template), keeps it in view, and saves progress.
 document.addEventListener("alpine:init", () => {
+  // Set when a chapter ends. The next reader (swapped in by htmx) sees it in
+  // init() and starts playing. Shared across instances, so it lives out here.
+  let autoplay = false;
+
   Alpine.data("reader", () => {
     // Non-reactive state: DOM nodes and big arrays stay out of Alpine proxies.
     let words = [];
@@ -21,25 +25,30 @@ document.addEventListener("alpine:init", () => {
       return found;
     };
 
-    const keepInView = (w) => {
-      const h = window.innerHeight;
-      // While a picture's caption is read, keep the whole picture on screen
-      // (below the sticky player) if it fits; else follow the word as usual.
+    // keepInView works in the visible band between the sticky top bar and the
+    // fixed player bar, so the spoken word never hides behind either.
+    const keepInView = (w, top, bar) => {
+      const lo = top.getBoundingClientRect().bottom;
+      const hi = bar.getBoundingClientRect().top;
+      const h = hi - lo;
+      const centre = (r) => window.scrollBy({ top: (r.top + r.bottom) / 2 - (lo + hi) / 2, behavior: "smooth" });
+      // While a picture's caption is read, keep the whole picture visible if
+      // it fits; else follow the word as usual.
       const fig = w.closest("figure");
       const f = fig?.getBoundingClientRect();
-      if (f && f.height < h * 0.8) {
-        if (f.top < h * 0.15 || f.bottom > h) fig.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (f && f.height < h * 0.9) {
+        if (f.top < lo || f.bottom > hi) centre(f);
         return;
       }
       const r = w.getBoundingClientRect();
-      if (r.top < h * 0.3 || r.bottom > h * 0.7) {
-        w.scrollIntoView({ block: "center", behavior: "smooth" });
-      }
+      if (r.top < lo + h * 0.2 || r.bottom > lo + h * 0.7) centre(r);
     };
 
     return {
       follow: true,
       time: 0,
+      duration: 0,
+      playing: false,
 
       init() {
         words = Array.from(this.$refs.text.querySelectorAll("span[data-s]"));
@@ -49,9 +58,49 @@ document.addEventListener("alpine:init", () => {
         if (start > 0) {
           audio.addEventListener("loadedmetadata", () => { audio.currentTime = start; }, { once: true });
         }
-        audio.addEventListener("play", () => this.loop());
-        audio.addEventListener("pause", () => { this.tick(); this.save(); });
+        audio.addEventListener("durationchange", () => { this.duration = audio.duration; });
+        audio.addEventListener("play", () => { this.playing = true; this.loop(); });
+        audio.addEventListener("pause", () => { this.playing = false; this.tick(); this.save(); });
         audio.addEventListener("seeked", () => this.tick());
+        audio.addEventListener("ended", () => this.next());
+        if (autoplay) {
+          autoplay = false;
+          window.scrollTo({ top: 0 });
+          audio.play().catch(() => {}); // blocked autoplay: user presses play
+        }
+      },
+
+      // Chapter done: follow the server-rendered "Next →" link (htmx swaps
+      // #reader) and let the new reader start itself. Last chapter: stop.
+      next() {
+        const link = this.$el.querySelector("a[rel=next]");
+        if (!link) return;
+        autoplay = true;
+        link.click();
+      },
+
+      toggle() {
+        const audio = this.$refs.audio;
+        audio.paused ? audio.play() : audio.pause();
+      },
+
+      skip(secs) {
+        const audio = this.$refs.audio;
+        audio.currentTime = Math.min(audio.duration || Infinity, Math.max(0, audio.currentTime + secs));
+        this.resumeFollow();
+      },
+
+      scrub(e) {
+        this.$refs.audio.currentTime = Number(e.target.value);
+      },
+
+      // m:ss, or h:mm:ss for long chapters.
+      clock(t) {
+        if (!Number.isFinite(t)) return "0:00";
+        const s = Math.floor(t);
+        const mm = String(Math.floor(s / 60) % 60);
+        const ss = String(s % 60).padStart(2, "0");
+        return s >= 3600 ? `${Math.floor(s / 3600)}:${mm.padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
       },
 
       destroy() {
@@ -75,12 +124,12 @@ document.addEventListener("alpine:init", () => {
         current = i;
         if (i < 0) return;
         words[i].dataset.active = "";
-        if (this.follow) keepInView(words[i]);
+        if (this.follow) keepInView(words[i], this.$refs.top, this.$refs.bar);
       },
 
       resumeFollow() {
         this.follow = true;
-        if (current >= 0) keepInView(words[current]);
+        if (current >= 0) keepInView(words[current], this.$refs.top, this.$refs.bar);
       },
 
       seek(e) {
@@ -92,13 +141,12 @@ document.addEventListener("alpine:init", () => {
 
       key(e) {
         if (e.target.closest("input, textarea, button, audio, a")) return;
-        const audio = this.$refs.audio;
         if (e.code === "Space") {
           e.preventDefault();
-          audio.paused ? audio.play() : audio.pause();
+          this.toggle();
         } else if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
           e.preventDefault();
-          audio.currentTime = Math.max(0, audio.currentTime + (e.code === "ArrowLeft" ? -10 : 10));
+          this.skip(e.code === "ArrowLeft" ? -10 : 10);
         } else if (e.code === "PageUp" || e.code === "PageDown") {
           this.follow = false;
         }

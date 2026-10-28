@@ -21,6 +21,14 @@ The reader scans `-library` once at startup. Each request renders HTML on the
 server (templ). The browser gets one `<span data-s="start">` per word. A small
 Alpine component follows `audio.currentTime` and moves the highlight.
 
+The player is a custom bar fixed to the bottom (`x-ref="bar"`): seek slider,
+−10s, play/pause, +10s. The `<audio>` is hidden (no native `controls`).
+Auto-scroll keeps the word inside the band between the sticky top bar
+(`x-ref="top"`) and the player bar; the article has `pb-[40vh]` so the last lines
+can rise above the bar. When a chapter ends, sync.js clicks `a[rel=next]` (the
+normal htmx "Next →" link) and the swapped-in reader starts playing by itself.
+The last chapter has no `rel=next`, so playback just stops.
+
 ## Stack and why
 
 | Piece | Choice | Why |

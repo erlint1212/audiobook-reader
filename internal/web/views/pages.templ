@@ -67,18 +67,18 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		x-on:wheel.window="follow = false"
 		x-on:touchmove.window="follow = false"
 	>
-		<div class="sticky top-0 z-10 -mx-4 bg-stone-50/95 px-4 py-3 backdrop-blur dark:bg-stone-900/95">
-			<div class="mb-2 flex items-center justify-between gap-2 text-sm">
-				@chapterLink(b, ch.Index-1, "← Prev")
+		<div x-ref="top" class="sticky top-0 z-10 -mx-4 bg-stone-50/95 px-4 py-3 backdrop-blur dark:bg-stone-900/95">
+			<div class="flex items-center justify-between gap-2 text-sm">
+				@chapterLink(b, ch.Index-1, "← Prev", "prev")
 				<a href={ bookURL(b.Manifest.ID) } class="truncate font-semibold hover:underline">{ ch.Title }</a>
-				@chapterLink(b, ch.Index+1, "Next →")
+				@chapterLink(b, ch.Index+1, "Next →", "next")
 			</div>
-			<audio x-ref="audio" src={ audioURL(b.Manifest.ID, ch.Index) } preload="metadata" controls class="w-full"></audio>
 		</div>
+		// pb-[40vh] lets the last lines scroll up past the fixed player bar.
 		<article
 			x-ref="text"
 			x-on:click="seek($event)"
-			class="mt-4 text-lg space-y-4 leading-relaxed [&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600"
+			class="mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600"
 		>
 			for bi, blk := range a.Blocks {
 				switch blk.Kind {
@@ -107,10 +107,44 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 			type="button"
 			x-show="!follow"
 			x-on:click="resumeFollow()"
-			class="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-full bg-amber-500 px-4 py-2 font-semibold text-stone-900 shadow-lg hover:bg-amber-400"
+			class="fixed bottom-32 left-1/2 z-20 -translate-x-1/2 rounded-full bg-amber-500 px-4 py-2 font-semibold text-stone-900 shadow-lg hover:bg-amber-400"
 		>
 			Back to reading position
 		</button>
+		// Player bar, fixed to the bottom. Native controls are hidden; these
+		// buttons drive the <audio> through sync.js.
+		<div x-ref="bar" class="fixed inset-x-0 bottom-0 z-10 border-t border-stone-200 bg-stone-50/95 backdrop-blur dark:border-stone-700 dark:bg-stone-900/95">
+			<audio x-ref="audio" src={ audioURL(b.Manifest.ID, ch.Index) } preload="metadata" class="hidden"></audio>
+			<div class="mx-auto max-w-3xl px-4 py-3">
+				<div class="flex items-center gap-3 text-sm tabular-nums text-stone-500">
+					<span x-text="clock(time)" class="w-12 text-right">0:00</span>
+					<input
+						type="range"
+						min="0"
+						step="0.1"
+						aria-label="Position"
+						x-bind:max="duration"
+						x-bind:value="time"
+						x-on:input="scrub($event)"
+						class="h-1 flex-1 cursor-pointer accent-amber-500"
+					/>
+					<span x-text="clock(duration)" class="w-12">0:00</span>
+				</div>
+				<div class="mt-2 flex items-center justify-center gap-6">
+					@skipButton(-10, "Back 10 seconds", "−10s")
+					<button
+						type="button"
+						aria-label="Play or pause"
+						x-on:click="toggle()"
+						x-bind:aria-pressed="playing"
+						class="flex size-14 items-center justify-center rounded-full bg-amber-500 text-xl font-bold text-stone-900 shadow hover:bg-amber-400 active:scale-95"
+					>
+						<span x-text="playing ? '❚❚' : '▶'">▶</span>
+					</button>
+					@skipButton(10, "Forward 10 seconds", "+10s")
+				</div>
+			</div>
+		</div>
 		<form x-ref="pos" hx-post={ progressURL(b.Manifest.ID) } hx-trigger="savepos" hx-swap="none" class="hidden">
 			<input type="hidden" name="chapter" value={ itoa(ch.Index) }/>
 			<input type="hidden" name="time" x-bind:value="time.toFixed(3)"/>
@@ -125,10 +159,22 @@ templ words(ws []bundle.Word) {
 	}
 }
 
-templ chapterLink(b bundle.Book, index int, label string) {
+// skipButton jumps the audio by secs (negative = back).
+templ skipButton(secs int, aria string, label string) {
+	<button
+		type="button"
+		aria-label={ aria }
+		x-on:click={ "skip(" + itoa(secs) + ")" }
+		class="flex size-11 items-center justify-center rounded-full text-sm font-semibold hover:bg-stone-200 active:scale-95 dark:hover:bg-stone-700"
+	>{ label }</button>
+}
+
+// rel ("prev"/"next") also lets sync.js find the next link to auto-advance.
+templ chapterLink(b bundle.Book, index int, label string, rel string) {
 	if index >= 1 && index <= len(b.Manifest.Chapters) {
 		<a
 			href={ chapterURL(b.Manifest.ID, index) }
+			rel={ rel }
 			hx-get={ string(chapterURL(b.Manifest.ID, index)) }
 			hx-target="#reader"
 			hx-swap="outerHTML"

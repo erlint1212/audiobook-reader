@@ -108,6 +108,36 @@ func TestReaderRendersPictures(t *testing.T) {
 	}
 }
 
+// The custom bottom player replaces native controls, and sync.js auto-advances
+// by clicking a[rel=next], so only a chapter with a next one may render it.
+func TestReaderPlayerAndNextLink(t *testing.T) {
+	s, _ := newTestServer(t)
+	first := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	for _, want := range []string{
+		`x-ref="bar"`,
+		`x-on:click="toggle()"`,
+		`x-on:click="skip(-10)"`,
+		`x-on:click="skip(10)"`,
+		`rel="next"`,
+		`href="/books/demo/ch/2"`,
+		`pb-[40vh]`, // last lines can scroll above the fixed bar
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("ch 1 missing %q", want)
+		}
+	}
+	if strings.Contains(first, "controls") {
+		t.Error("audio still renders native controls")
+	}
+	last := do(s, httptest.NewRequest("GET", "/books/demo/ch/2", nil)).Body.String()
+	if strings.Contains(last, `rel="next"`) {
+		t.Error("last chapter renders a next link; auto-advance would loop")
+	}
+	if !strings.Contains(last, `rel="prev"`) {
+		t.Error("last chapter missing prev link")
+	}
+}
+
 func TestImageServesFile(t *testing.T) {
 	s, _ := newTestServer(t)
 	w := do(s, httptest.NewRequest("GET", "/books/figures/ch/1/img/3", nil))
