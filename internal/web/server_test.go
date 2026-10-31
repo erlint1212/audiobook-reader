@@ -313,3 +313,50 @@ func TestNextLinkAppearsWhenChapterAdded(t *testing.T) {
 		t.Errorf("new chapter = %d, want 200", got)
 	}
 }
+
+// Chapter lists show the chapter number in front of the title.
+func TestBookPageNumbersChapters(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	one := strings.Index(body, ">1.</span>")
+	two := strings.Index(body, ">2.</span>")
+	if one < 0 || two < 0 {
+		t.Fatal("book page missing chapter numbers")
+	}
+	if one > strings.Index(body, "Chapter One") {
+		t.Error("number 1 not before Chapter One")
+	}
+	if two > strings.Index(body, "Chapter Two") {
+		t.Error("number 2 not before Chapter Two")
+	}
+}
+
+// The reader's chapter drawer lists every chapter as an htmx link, marks the
+// current one, and adds no rel (auto-advance clicks a[rel=next]).
+func TestReaderChapterDrawer(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/demo/ch/2", nil)).Body.String()
+	for _, want := range []string{
+		`x-on:click="openChapters()"`,
+		`x-ref="drawer"`,
+		`x-on:wheel.window="unfollow($event)"`,
+		`hx-get="/books/demo/ch/1"`,
+		`hx-get="/books/demo/ch/2"`,
+		`x-on:click="pick()"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("reader missing %q", want)
+		}
+	}
+	if n := strings.Count(body, `aria-current="page"`); n != 1 {
+		t.Fatalf("aria-current count = %d, want 1", n)
+	}
+	i := strings.Index(body, `aria-current="page"`)
+	link := body[strings.LastIndex(body[:i], "<a "):i]
+	if !strings.Contains(link, `href="/books/demo/ch/2"`) {
+		t.Errorf("aria-current on wrong link: %s", link)
+	}
+	if strings.Contains(body, `rel="next"`) {
+		t.Error("drawer added a next link on the last chapter; auto-advance would loop")
+	}
+}

@@ -46,7 +46,10 @@ templ BookPage(b bundle.Book, pos progress.Position, hasPos bool) {
 			for _, ch := range b.Manifest.Chapters {
 				<li>
 					<a href={ chapterURL(b.Manifest.ID, ch.Index) } class="flex justify-between py-2 hover:underline">
-						<span>{ ch.Title }</span>
+						<span class="flex gap-3">
+							@chapterNum(ch.Index)
+							<span>{ ch.Title }</span>
+						</span>
 						<span class="text-sm text-stone-500 tabular-nums">{ clock(ch.DurationS) }</span>
 					</a>
 				</li>
@@ -70,16 +73,29 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		data-start={ secs(start) }
 		data-chapter={ itoa(ch.Index) }
 		x-on:keydown.window="key($event)"
-		x-on:wheel.window="follow = false"
-		x-on:touchmove.window="follow = false"
+		x-on:keydown.escape.window="chapters = false"
+		x-on:wheel.window="unfollow($event)"
+		x-on:touchmove.window="unfollow($event)"
 	>
 		<div x-ref="top" class="sticky top-0 z-10 -mx-4 bg-stone-50/95 px-4 py-3 backdrop-blur dark:bg-stone-900/95">
 			<div class="flex items-center justify-between gap-2 text-sm">
-				@chapterLink(b, ch.Index-1, "← Prev", "prev")
+				<div class="flex items-center gap-1">
+					<button
+						type="button"
+						aria-label="Chapters"
+						x-on:click="openChapters()"
+						x-bind:aria-expanded="chapters"
+						class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
+					>☰</button>
+					@chapterLink(b, ch.Index-1, "← Prev", "prev")
+				</div>
 				<a href={ bookURL(b.Manifest.ID) } class="truncate font-semibold hover:underline">{ ch.Title }</a>
 				@NextLink(b, ch.Index)
 			</div>
 		</div>
+		// Sibling of the top bar, not inside it: its backdrop-blur would make
+		// these fixed elements position relative to the bar.
+		@chapterDrawer(b, ch.Index)
 		// pb-[40vh] lets the last lines scroll up past the fixed player bar.
 		<article
 			x-ref="text"
@@ -248,4 +264,69 @@ templ chapterLink(b bundle.Book, index int, label string, rel string) {
 	} else {
 		<span class="px-2 py-1 text-stone-400">{ label }</span>
 	}
+}
+
+// chapterNum is the "1." in front of a chapter title.
+templ chapterNum(i int) {
+	<span class="w-8 shrink-0 text-right tabular-nums text-stone-500">{ itoa(i) }.</span>
+}
+
+// chapterDrawer is the reader's chapter list: an overlay on the left, above
+// the page, so opening it moves no text and leaves the audio alone. It lives
+// inside #reader, so picking a chapter swaps it out (closed) with the rest.
+// Links carry no rel, so sync.js's a[rel=next] still finds only "Next →".
+// x-cloak hides both parts until Alpine starts; Alpine then drops the attribute.
+templ chapterDrawer(b bundle.Book, cur int) {
+	<div
+		x-cloak
+		x-show="chapters"
+		x-on:click="chapters = false"
+		x-transition.opacity
+		class="fixed inset-0 z-30 bg-stone-900/30 [&[x-cloak]]:hidden"
+	></div>
+	<nav
+		x-cloak
+		x-ref="drawer"
+		x-show="chapters"
+		x-transition:enter="transition duration-200"
+		x-transition:enter-start="-translate-x-full"
+		x-transition:enter-end="translate-x-0"
+		x-transition:leave="transition duration-150"
+		x-transition:leave-start="translate-x-0"
+		x-transition:leave-end="-translate-x-full"
+		aria-label="Chapters"
+		class="fixed inset-y-0 left-0 z-40 w-80 max-w-[85vw] overflow-y-auto overscroll-contain bg-stone-50 shadow-xl dark:bg-stone-900 [&[x-cloak]]:hidden"
+	>
+		<div class="sticky top-0 flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-3 dark:border-stone-700 dark:bg-stone-900">
+			<span class="font-semibold">Chapters</span>
+			<button
+				type="button"
+				aria-label="Close chapters"
+				x-on:click="chapters = false"
+				class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
+			>✕</button>
+		</div>
+		<ol class="py-2">
+			for _, c := range b.Manifest.Chapters {
+				<li>
+					<a
+						href={ chapterURL(b.Manifest.ID, c.Index) }
+						hx-get={ string(chapterURL(b.Manifest.ID, c.Index)) }
+						hx-target="#reader"
+						hx-swap="outerHTML"
+						hx-push-url="true"
+						x-on:click="pick()"
+						if c.Index == cur {
+							aria-current="page"
+						}
+						class="flex gap-3 px-4 py-2 text-sm hover:bg-stone-200 dark:hover:bg-stone-700 aria-[current=page]:bg-amber-200 aria-[current=page]:font-semibold dark:aria-[current=page]:bg-amber-700"
+					>
+						@chapterNum(c.Index)
+						<span class="flex-1">{ c.Title }</span>
+						<span class="tabular-nums text-stone-500">{ clock(c.DurationS) }</span>
+					</a>
+				</li>
+			}
+		</ol>
+	</nav>
 }

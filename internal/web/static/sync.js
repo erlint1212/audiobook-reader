@@ -64,6 +64,7 @@ document.addEventListener("alpine:init", () => {
       duration: 0,
       playing: false,
       speed: 1,
+      chapters: false,
 
       init() {
         words = Array.from(this.$refs.text.querySelectorAll("span[data-s]"));
@@ -102,6 +103,30 @@ document.addEventListener("alpine:init", () => {
       // swapped-in link before it is clicked.
       nextReady() {
         if (waiting) setTimeout(() => this.next(), 0);
+      },
+
+      // Open the chapter drawer centred on the current chapter. scrollTop,
+      // not scrollIntoView, so only the drawer scrolls, never the page.
+      openChapters() {
+        this.chapters = true;
+        this.$nextTick(() => {
+          const d = this.$refs.drawer;
+          const cur = d.querySelector("[aria-current=page]");
+          if (!cur) return;
+          d.scrollTop = cur.offsetTop - d.clientHeight / 2 + cur.offsetHeight / 2;
+          cur.focus({ preventScroll: true });
+        });
+      },
+
+      // Drawer link clicked (htmx does the swap). Keep playing if we were.
+      pick() {
+        autoplay = this.playing;
+      },
+
+      // Page scrolled by hand: stop following. Scrolling the drawer does not count.
+      unfollow(e) {
+        if (this.$refs.drawer.contains(e.target)) return;
+        this.follow = false;
       },
 
       toggle() {

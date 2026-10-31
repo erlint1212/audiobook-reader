@@ -38,6 +38,18 @@ rescans and, once forge has written chapter n+1, returns the live link. Its
 `x-init="nextReady()"` lets a reader that already hit the end go on by itself,
 so you can listen while forge is still generating.
 
+Chapter lists show the number before each title (`chapterNum`). The reader's
+☰ button opens `chapterDrawer`: a fixed overlay on the left (backdrop `z-30`,
+panel `z-40`, above both bars) listing every chapter, centred on the current
+one (`aria-current="page"`). Opening it moves no page text and leaves the audio
+alone; scrolling it does not turn off auto-follow (`unfollow` ignores events
+inside `x-ref="drawer"`). It must stay a sibling of the top bar: the bar's
+`backdrop-blur` would make `fixed` children position relative to the bar. Its
+links swap `#reader` like Prev/Next but carry no `rel`, so auto-advance still
+finds only "Next →". Picking a chapter while playing keeps playing (same
+`autoplay` flag as auto-advance). The drawer is inside `#reader`, so a swap
+replaces it closed.
+
 ## Stack and why
 
 | Piece | Choice | Why |
