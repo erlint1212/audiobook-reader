@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"audiobook-reader/internal/library"
+	"audiobook-reader/internal/notes"
 	"audiobook-reader/internal/progress"
 	"audiobook-reader/internal/web"
 )
@@ -20,7 +22,7 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8090", "listen address")
 	libDir := flag.String("library", "./library", "directory of forge bundles")
-	dataDir := flag.String("data", defaultDataDir(), "directory for listening progress")
+	dataDir := flag.String("data", defaultDataDir(), "directory for listening progress and notes")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -39,9 +41,13 @@ func run(addr, libDir, dataDir string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	ns, err := notes.Open(filepath.Join(dataDir, "notes"))
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           web.New(lib, store, log),
+		Handler:           web.New(lib, store, ns, log),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -51,7 +57,9 @@ func run(addr, libDir, dataDir string, log *slog.Logger) error {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdown)
+		if err := srv.Shutdown(shutdown); err != nil {
+			log.Error("shutdown", "err", err)
+		}
 	}()
 
 	log.Info("listening", "addr", "http://"+addr, "books", len(lib.Get().Books()))

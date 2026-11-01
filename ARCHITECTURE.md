@@ -50,6 +50,21 @@ finds only "Next →". Picking a chapter while playing keeps playing (same
 `autoplay` flag as auto-advance). The drawer is inside `#reader`, so a swap
 replaces it closed.
 
+Notes: select words in the reader and a floating "＋ Note" button shows
+(`selChanged` on `selectionchange`; it fires on `pointerdown` because a tap
+on touch screens clears the selection before `click`). It fills `draft` with
+the first/last selected word's `data-s` and opens the ✎ notes drawer, the
+chapter drawer's mirror on the right (`x-ref="notes"`, same rules: sibling of
+the top bar, inside `#reader`, ignored by `unfollow`). An empty note is a
+bookmark; 🔖 in the top bar bookmarks the current word with no selection.
+**The client sends only times**; the server builds the quote from the
+alignment (`quoteFor`), so stored quotes are always book text. Every note
+change answers with `NotesList`, swapped into `#notes`. In the reader
+(`?view=reader`) its links swap `#reader` at `?t=<start>` and its
+`x-init="notesChanged()"` makes sync.js redraw underlines (`data-note`) from
+the list's `data-ch/start/end`, so the rendered list is the only source of
+underline ranges. The book page shows the same list with plain links.
+
 ## Stack and why
 
 | Piece | Choice | Why |
@@ -61,7 +76,7 @@ replaces it closed.
 | Client behaviour | Alpine.js (CDN, pinned) | Word sync needs ~100 lines; Alpine keeps them declarative. |
 | Styling | TailwindCSS v4 standalone CLI from nixpkgs | Only Tailwind; no npm. All styling lives in templ files. |
 | Assets | `go:embed internal/web/static` | Binary is self-contained (after `make css`). |
-| State | One JSON file per book in `-data` (XDG state dir) | Single-user; atomic temp+rename writes; no DB. |
+| State | One JSON file per book in `-data` (XDG state dir); notes in `-data/notes/` | Single-user; atomic temp+rename writes; no DB. |
 
 ## Packages
 
@@ -75,6 +90,10 @@ replaces it closed.
   in an `atomic.Pointer`; `Refresh` builds a new one and swaps it in. On refresh
   a bundle that fails to load (forge mid-write) keeps its last good version.
 - `internal/progress`: per-book position store.
+- `internal/notes`: per-book notes/bookmarks (one JSON array per book).
+  Changes are read-modify-write, so `Store` holds a mutex. Ids are 16 hex
+  chars from `crypto/rand`; handlers check `ValidID` before use.
+- `internal/atomicfile`: temp file + rename, shared by both stores.
 - `internal/web`: handlers + routes. `views/` holds templ components and
   `static/` holds `sync.js` + Tailwind input.
 
@@ -92,6 +111,9 @@ replaces it closed.
 | `POST /refresh` | rescan library → 303 `/` |
 | `POST /books/{id}/refresh` | rescan library → 303 `/books/{id}` |
 | `GET /books/{id}/ch/{n}/next` | rescan, return the "Next →" fragment (live link or polling placeholder) |
+| `POST /books/{id}/notes[?view=reader]` | form `chapter`, `start`, `end` (word starts), `text` → `NotesList` |
+| `POST /books/{id}/notes/{nid}[?view=reader]` | form `text` → update, `NotesList` |
+| `DELETE /books/{id}/notes/{nid}[?view=reader]` | delete → `NotesList` (htmx 4 sends no form data with DELETE, hence the query) |
 
 ## Rules for working in this repo
 

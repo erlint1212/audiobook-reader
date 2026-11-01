@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"audiobook-reader/internal/atomicfile"
 )
 
 // Position is where the listener stopped.
@@ -47,29 +49,13 @@ func (s Store) Get(bookID string) (pos Position, ok bool, err error) {
 	return pos, true, nil
 }
 
-// Save writes pos via temp file + rename so a crash never leaves a torn file.
+// Save writes pos atomically, so a crash never leaves a torn file.
 func (s Store) Save(bookID string, pos Position) error {
 	raw, err := json.Marshal(pos)
 	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(s.dir, bookID+".*.tmp")
-	if err != nil {
 		return fmt.Errorf("progress: %w", err)
 	}
-	defer os.Remove(tmp.Name()) // no-op after successful rename
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		return fmt.Errorf("progress: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("progress: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("progress: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), s.file(bookID)); err != nil {
+	if err := atomicfile.Write(s.dir, bookID+".json", raw); err != nil {
 		return fmt.Errorf("progress: %w", err)
 	}
 	return nil

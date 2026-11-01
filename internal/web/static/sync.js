@@ -28,6 +28,9 @@ document.addEventListener("alpine:init", () => {
     // Set when the last known chapter ended. If the polled "Next →" link
     // shows up later (forge wrote another chapter), nextReady() goes on.
     let waiting = false;
+    // This reader's chapter index, read from the root in init(). Methods run
+    // from child expressions, where this.$el is the child, not the root.
+    let chapter = "";
 
     // Last index whose start <= t, or -1 before the first word.
     const indexAt = (t) => {
@@ -65,10 +68,16 @@ document.addEventListener("alpine:init", () => {
       playing: false,
       speed: 1,
       chapters: false,
+      notes: false, // notes drawer open
+      sel: false, // text selected inside the article: show "＋ Note"
+      draft: null, // {start, end, quote} of the note being written
+      mark: "", // start time sent by the bookmark form
+      flash: "", // short status message ("Bookmarked")
 
       init() {
         words = Array.from(this.$refs.text.querySelectorAll("span[data-s]"));
         starts = words.map((w) => Number(w.dataset.s));
+        chapter = this.$el.dataset.chapter;
         const audio = this.$refs.audio;
         const start = Number(this.$el.dataset.start) || 0;
         if (start > 0) {
@@ -123,10 +132,66 @@ document.addEventListener("alpine:init", () => {
         autoplay = this.playing;
       },
 
-      // Page scrolled by hand: stop following. Scrolling the drawer does not count.
+      // Page scrolled by hand: stop following. Scrolling a drawer does not count.
       unfollow(e) {
-        if (this.$refs.drawer.contains(e.target)) return;
+        if (this.$refs.drawer.contains(e.target) || this.$refs.notes.contains(e.target)) return;
         this.follow = false;
+      },
+
+      // selectionchange: offer "＋ Note" while text in the article is selected.
+      selChanged() {
+        const s = document.getSelection();
+        this.sel = !!s && !s.isCollapsed && s.rangeCount > 0 &&
+          this.$refs.text.contains(s.getRangeAt(0).commonAncestorContainer);
+      },
+
+      // Turn the selection into a draft: the first and last selected words
+      // give the times. The server builds the real quote from those.
+      noteFromSelection() {
+        const s = document.getSelection();
+        if (!this.sel || !s) return;
+        const hit = words.filter((w) => s.containsNode(w, true));
+        if (hit.length === 0) return;
+        const quote = s.toString().trim(); // the blockquote collapses whitespace
+        this.draft = {
+          start: hit[0].dataset.s,
+          end: hit[hit.length - 1].dataset.s,
+          quote: quote.length > 300 ? quote.slice(0, 300) + "…" : quote,
+        };
+        s.removeAllRanges();
+        this.sel = false;
+        this.notes = true;
+        this.$nextTick(() => this.$refs.noteText.focus());
+      },
+
+      // Bookmark the current word (or the first one before playback starts).
+      bookmark() {
+        if (words.length === 0) return;
+        this.mark = words[Math.max(current, 0)].dataset.s;
+        this.$nextTick(() => this.$refs.bookmark.dispatchEvent(new Event("bookmark")));
+        this.flash = "Bookmarked";
+        setTimeout(() => { this.flash = ""; }, 1500);
+      },
+
+      // x-init of the notes list, on first render and after every change:
+      // drop the draft, then redraw the underlines.
+      notesChanged() {
+        this.draft = null;
+        this.$refs.noteText.value = "";
+        this.markNotes();
+      },
+
+      // Underline (data-note) every word whose start lies in a note of this
+      // chapter. Ranges come from the server-rendered list.
+      markNotes() {
+        for (const w of words) delete w.dataset.note;
+        for (const li of document.querySelectorAll(`#notes li[data-ch="${chapter}"]`)) {
+          const s = Number(li.dataset.start), e = Number(li.dataset.end);
+          let i = indexAt(s);
+          while (i > 0 && starts[i - 1] >= s) i--; // equal starts before i
+          if (i < 0 || starts[i] < s) i++;
+          for (; i < words.length && starts[i] <= e; i++) words[i].dataset.note = "";
+        }
       },
 
       toggle() {
@@ -195,6 +260,8 @@ document.addEventListener("alpine:init", () => {
       seek(e) {
         const s = e.target.dataset?.s;
         if (s === undefined) return;
+        // Ending a text selection is not a click to seek.
+        if (!document.getSelection()?.isCollapsed) return;
         this.$refs.audio.currentTime = Number(s);
         this.resumeFollow();
       },

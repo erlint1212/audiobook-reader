@@ -12,7 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"audiobook-reader/internal/bundle"
 	"audiobook-reader/internal/library"
+	"audiobook-reader/internal/notes"
 	"audiobook-reader/internal/progress"
 )
 
@@ -27,7 +29,16 @@ func newTestServer(t *testing.T) (*Server, progress.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(lib, store, log), store
+	return New(lib, store, newNotes(t), log), store
+}
+
+func newNotes(t *testing.T) notes.Store {
+	t.Helper()
+	ns, err := notes.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ns
 }
 
 func do(s *Server, r *http.Request) *httptest.ResponseRecorder {
@@ -281,7 +292,7 @@ func TestNextLinkAppearsWhenChapterAdded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(lib, store, log)
+	s := New(lib, store, newNotes(t), log)
 
 	page := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
 	for _, want := range []string{`hx-get="/books/demo/ch/1/next"`, `hx-trigger="every 30s"`} {
@@ -358,5 +369,192 @@ func TestReaderChapterDrawer(t *testing.T) {
 	}
 	if strings.Contains(body, `rel="next"`) {
 		t.Error("drawer added a next link on the last chapter; auto-advance would loop")
+	}
+}
+
+func newNotesServer(t *testing.T) (*Server, notes.Store) {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lib, err := library.Open("../../testdata/golden-bundle", log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := progress.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns := newNotes(t)
+	return New(lib, store, ns, log), ns
+}
+
+func postForm(s *Server, path string, form url.Values) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("POST", path, strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return do(s, r)
+}
+
+// The client sends only word times; the server quotes the book itself.
+func TestNoteAdd(t *testing.T) {
+	s, ns := newNotesServer(t)
+	for _, bad := range []url.Values{
+		{"chapter": {"9"}, "start": {"1"}, "end": {"1"}},
+		{"chapter": {"x"}, "start": {"1"}, "end": {"1"}},
+		{"chapter": {"1"}, "start": {"2"}, "end": {"1"}},
+		{"chapter": {"1"}, "start": {"1"}, "end": {"99"}},
+		{"chapter": {"1"}, "start": {"NaN"}, "end": {"1"}},
+		{"chapter": {"1"}, "start": {"-1"}, "end": {"1"}},
+		{"chapter": {"1"}, "start": {"3.5"}, "end": {"3.9"}}, // no word starts there
+		{"chapter": {"1"}, "start": {"1"}, "end": {"1"}, "text": {strings.Repeat("x", maxNoteRunes+1)}},
+	} {
+		if code := postForm(s, "/books/demo/notes", bad).Code; code != http.StatusBadRequest {
+			t.Errorf("POST %v = %d, want 400", bad, code)
+		}
+	}
+	if code := postForm(s, "/books/nope/notes", url.Values{"chapter": {"1"}, "start": {"1"}, "end": {"1"}}).Code; code != 404 {
+		t.Errorf("unknown book = %d, want 404", code)
+	}
+
+	w := postForm(s, "/books/demo/notes?view=reader", url.Values{
+		"chapter": {"1"}, "start": {"1.000"}, "end": {"2.100"}, "text": {"  my note  "},
+	})
+	if w.Code != 200 {
+		t.Fatalf("POST valid = %d %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"Hello, brave new</blockquote>",
+		"my note",
+		`x-init="notesChanged()"`,
+		`hx-get="/books/demo/ch/1?t=1.000"`,
+		`data-ch="1" data-start="1.000" data-end="2.100"`,
+		"Ch 1 · 0:01",
+		"Chapter One",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("list missing %q", want)
+		}
+	}
+	got, err := ns.List("demo")
+	if err != nil || len(got) != 1 || got[0].Text != "my note" || got[0].Quote != "Hello, brave new" {
+		t.Fatalf("stored %+v, %v", got, err)
+	}
+
+	// Bookmark: one point quotes on to the end of its block.
+	w = postForm(s, "/books/demo/notes?view=reader", url.Values{"chapter": {"1"}, "start": {"0.4"}, "end": {"0.4"}})
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "🔖 Bookmark") {
+		t.Fatalf("bookmark = %d %s", w.Code, w.Body)
+	}
+	got, err = ns.List("demo")
+	if err != nil || len(got) != 2 || got[0].Quote != "One" || !got[0].Bookmark() {
+		t.Fatalf("stored %+v, %v", got, err)
+	}
+}
+
+func TestNoteUpdateDelete(t *testing.T) {
+	s, ns := newNotesServer(t)
+	n, err := ns.Add("demo", notes.Note{Chapter: 1, Start: 1, End: 1, Quote: "Hello,"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := "/books/demo/notes/" + n.ID
+	w := postForm(s, item, url.Values{"text": {"edited"}})
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "edited") {
+		t.Fatalf("update = %d %s", w.Code, w.Body)
+	}
+	// Book page list: plain links, no reader hooks.
+	if body := w.Body.String(); strings.Contains(body, "notesChanged") || strings.Contains(body, `hx-get=`) {
+		t.Error("book-page list carries reader hooks")
+	}
+	if code := postForm(s, item, url.Values{"text": {strings.Repeat("x", maxNoteRunes+1)}}).Code; code != 400 {
+		t.Errorf("too long update = %d, want 400", code)
+	}
+	for path, want := range map[string]int{
+		"/books/demo/notes/0000000000000000": 404,
+		"/books/demo/notes/not-an-id":        404,
+		"/books/nope/notes/" + n.ID:          404,
+	} {
+		if code := postForm(s, path, url.Values{"text": {"x"}}).Code; code != want {
+			t.Errorf("POST %s = %d, want %d", path, code, want)
+		}
+		if code := do(s, httptest.NewRequest("DELETE", path, nil)).Code; code != want {
+			t.Errorf("DELETE %s = %d, want %d", path, code, want)
+		}
+	}
+	w = do(s, httptest.NewRequest("DELETE", item+"?view=reader", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "No notes yet") || !strings.Contains(w.Body.String(), "notesChanged") {
+		t.Fatalf("delete = %d %s", w.Code, w.Body)
+	}
+	if code := do(s, httptest.NewRequest("DELETE", item, nil)).Code; code != 404 {
+		t.Errorf("second delete = %d, want 404", code)
+	}
+}
+
+// Notes show on the book page (plain links) and in the reader's drawer
+// (htmx links that swap #reader at the note's time).
+func TestNotesRendered(t *testing.T) {
+	s, ns := newNotesServer(t)
+	book := do(s, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	if strings.Contains(book, `id="notes"`) {
+		t.Error("book page shows notes section with no notes")
+	}
+	if _, err := ns.Add("demo", notes.Note{Chapter: 2, Start: 0.5, End: 0.5, Quote: "quoted bit", Text: "thought"}); err != nil {
+		t.Fatal(err)
+	}
+	book = do(s, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	for _, want := range []string{`id="notes"`, `href="/books/demo/ch/2?t=0.500"`, "quoted bit", "thought", "Chapter Two"} {
+		if !strings.Contains(book, want) {
+			t.Errorf("book page missing %q", want)
+		}
+	}
+	reader := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	for _, want := range []string{
+		`x-ref="notes"`,
+		`x-on:click="bookmark()"`,
+		`x-on:selectionchange.document="selChanged()"`,
+		`hx-post="/books/demo/notes?view=reader"`,
+		`hx-get="/books/demo/ch/2?t=0.500"`,
+		`x-init="notesChanged()"`,
+		"quoted bit",
+	} {
+		if !strings.Contains(reader, want) {
+			t.Errorf("reader missing %q", want)
+		}
+	}
+	if code := do(s, httptest.NewRequest("GET", "/books/demo/ch/2?t=0.500", nil)).Code; code != 200 {
+		t.Errorf("note link = %d", code)
+	}
+}
+
+func TestQuoteFor(t *testing.T) {
+	ws := func(start float64, ts ...string) []bundle.Word {
+		out := make([]bundle.Word, len(ts))
+		for i, tx := range ts {
+			out[i] = bundle.Word{T: tx, S: start + float64(i), E: start + float64(i) + 0.5}
+		}
+		return out
+	}
+	a := bundle.Alignment{Blocks: []bundle.Block{
+		{Kind: bundle.KindParagraph, Words: ws(0, "a", "b", "c")},
+		{Kind: bundle.KindParagraph, Words: ws(3, "d", "e")},
+	}}
+	cases := []struct {
+		start, end float64
+		want       string
+	}{
+		{0, 0.9, "a"},
+		{1, 3, "b c d"},   // spans blocks
+		{1, 1, "b c"},     // bookmark stops at its block's end
+		{2.5, 2.5, "d e"}, // bookmark between words starts at the next one
+		{9, 9, ""},
+	}
+	for _, c := range cases {
+		if got := quoteFor(a, c.start, c.end); got != c.want {
+			t.Errorf("quoteFor(%v, %v) = %q, want %q", c.start, c.end, got, c.want)
+		}
+	}
+	long := bundle.Alignment{Blocks: []bundle.Block{{Words: ws(0, strings.Split(strings.Repeat("w ", maxQuoteWords+5), " ")[:maxQuoteWords+5]...)}}}
+	got := quoteFor(long, 0, 1000)
+	if !strings.HasSuffix(got, " …") || strings.Count(got, "w") != maxQuoteWords {
+		t.Errorf("long quote not cut: %q", got)
 	}
 }

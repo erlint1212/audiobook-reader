@@ -2,6 +2,7 @@ package views
 
 import (
 	"audiobook-reader/internal/bundle"
+	"audiobook-reader/internal/notes"
 	"audiobook-reader/internal/progress"
 )
 
@@ -30,7 +31,7 @@ templ LibraryPage(books []bundle.Book) {
 	}
 }
 
-templ BookPage(b bundle.Book, pos progress.Position, hasPos bool) {
+templ BookPage(b bundle.Book, pos progress.Position, hasPos bool, ns []notes.Note) {
 	@Layout(b.Manifest.Title) {
 		<div class="flex items-center justify-between gap-4">
 			<h1 class="text-2xl font-bold">{ b.Manifest.Title }</h1>
@@ -41,6 +42,13 @@ templ BookPage(b bundle.Book, pos progress.Position, hasPos bool) {
 			<a href={ resumeURL(b.Manifest.ID, pos) } class="mb-6 inline-block rounded bg-amber-500 px-4 py-2 font-semibold text-stone-900 hover:bg-amber-400">
 				Resume chapter { itoa(pos.Chapter) } at { clock(pos.Time) }
 			</a>
+		}
+		if len(ns) > 0 {
+			<h2 class="mb-2 text-lg font-semibold">Notes</h2>
+			<div id="notes" class="mb-8 rounded-lg border border-stone-200 dark:border-stone-700">
+				@NotesList(b, ns, false)
+			</div>
+			<h2 class="mb-2 text-lg font-semibold">Chapters</h2>
 		}
 		<ol class="divide-y divide-stone-200 dark:divide-stone-700">
 			for _, ch := range b.Manifest.Chapters {
@@ -58,24 +66,25 @@ templ BookPage(b bundle.Book, pos progress.Position, hasPos bool) {
 	}
 }
 
-templ ReaderPage(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64) {
+templ ReaderPage(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64, ns []notes.Note) {
 	@Layout(ch.Title + " · " + b.Manifest.Title) {
-		@Reader(b, ch, a, start)
+		@Reader(b, ch, a, start, ns)
 	}
 }
 
 // Reader is also returned alone as an htmx fragment when switching chapters.
 // All per-word styling lives here; sync.js only toggles data-active.
-templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64) {
+templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64, ns []notes.Note) {
 	<section
 		id="reader"
 		x-data="reader"
 		data-start={ secs(start) }
 		data-chapter={ itoa(ch.Index) }
 		x-on:keydown.window="key($event)"
-		x-on:keydown.escape.window="chapters = false"
+		x-on:keydown.escape.window="chapters = false; notes = false"
 		x-on:wheel.window="unfollow($event)"
 		x-on:touchmove.window="unfollow($event)"
+		x-on:selectionchange.document="selChanged()"
 	>
 		<div x-ref="top" class="sticky top-0 z-10 -mx-4 bg-stone-50/95 px-4 py-3 backdrop-blur dark:bg-stone-900/95">
 			<div class="flex items-center justify-between gap-2 text-sm">
@@ -90,17 +99,34 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 					@chapterLink(b, ch.Index-1, "← Prev", "prev")
 				</div>
 				<a href={ bookURL(b.Manifest.ID) } class="truncate font-semibold hover:underline">{ ch.Title }</a>
-				@NextLink(b, ch.Index)
+				<div class="flex items-center gap-1">
+					@NextLink(b, ch.Index)
+					<button
+						type="button"
+						aria-label="Bookmark this spot"
+						title="Bookmark this spot"
+						x-on:click="bookmark()"
+						class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
+					>🔖</button>
+					<button
+						type="button"
+						aria-label="Notes"
+						x-on:click="notes = true"
+						x-bind:aria-expanded="notes"
+						class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
+					>✎</button>
+				</div>
 			</div>
 		</div>
 		// Sibling of the top bar, not inside it: its backdrop-blur would make
 		// these fixed elements position relative to the bar.
 		@chapterDrawer(b, ch.Index)
+		@notesDrawer(b, ch.Index, ns)
 		// pb-[40vh] lets the last lines scroll up past the fixed player bar.
 		<article
 			x-ref="text"
 			x-on:click="seek($event)"
-			class="mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600"
+			class="mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600 [&_span[data-note]]:underline [&_span[data-note]]:decoration-amber-500 [&_span[data-note]]:decoration-dotted [&_span[data-note]]:decoration-2 [&_span[data-note]]:underline-offset-4"
 		>
 			for bi, blk := range a.Blocks {
 				switch blk.Kind {
@@ -133,6 +159,26 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		>
 			Back to reading position
 		</button>
+		// Shows while text is selected. pointerdown, not click: on touch screens
+		// the tap would clear the selection before a click fires.
+		<button
+			type="button"
+			x-cloak
+			x-show="sel"
+			x-on:pointerdown.prevent="noteFromSelection()"
+			x-on:click="noteFromSelection()"
+			class="fixed right-4 bottom-32 z-20 rounded-full bg-amber-500 px-4 py-2 font-semibold text-stone-900 shadow-lg hover:bg-amber-400 [&[x-cloak]]:hidden"
+		>
+			＋ Note
+		</button>
+		<div
+			x-cloak
+			x-show="flash"
+			x-text="flash"
+			x-transition.opacity
+			role="status"
+			class="fixed top-16 left-1/2 z-20 -translate-x-1/2 rounded-full bg-stone-800 px-4 py-2 text-sm text-stone-50 shadow-lg dark:bg-stone-100 dark:text-stone-900 [&[x-cloak]]:hidden"
+		></div>
 		// Player bar, fixed to the bottom. Native controls are hidden; these
 		// buttons drive the <audio> through sync.js.
 		<div x-ref="bar" class="fixed inset-x-0 bottom-0 z-10 border-t border-stone-200 bg-stone-50/95 backdrop-blur dark:border-stone-700 dark:bg-stone-900/95">
@@ -175,6 +221,20 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		<form x-ref="pos" hx-post={ progressURL(b.Manifest.ID) } hx-trigger="savepos" hx-swap="none" class="hidden">
 			<input type="hidden" name="chapter" value={ itoa(ch.Index) }/>
 			<input type="hidden" name="time" x-bind:value="time.toFixed(3)"/>
+		</form>
+		// Quick bookmark: sync.js sets `mark` to the current word's start and
+		// fires "bookmark". The fresh list lands in the notes drawer.
+		<form
+			x-ref="bookmark"
+			hx-post={ notesURL(b.Manifest.ID, true) }
+			hx-trigger="bookmark"
+			hx-target="#notes"
+			hx-swap="innerHTML"
+			class="hidden"
+		>
+			<input type="hidden" name="chapter" value={ itoa(ch.Index) }/>
+			<input type="hidden" name="start" x-bind:value="mark"/>
+			<input type="hidden" name="end" x-bind:value="mark"/>
 		</form>
 	</section>
 }
@@ -329,4 +389,162 @@ templ chapterDrawer(b bundle.Book, cur int) {
 			}
 		</ol>
 	</nav>
+}
+
+// notesDrawer is chapterDrawer's mirror on the right: the draft form for a
+// new note (filled by sync.js from the text selection) above the book's
+// notes. Same rules: sibling of the top bar, inside #reader, x-cloak.
+templ notesDrawer(b bundle.Book, cur int, ns []notes.Note) {
+	<div
+		x-cloak
+		x-show="notes"
+		x-on:click="notes = false"
+		x-transition.opacity
+		class="fixed inset-0 z-30 bg-stone-900/30 [&[x-cloak]]:hidden"
+	></div>
+	<aside
+		x-cloak
+		x-ref="notes"
+		x-show="notes"
+		x-transition:enter="transition duration-200"
+		x-transition:enter-start="translate-x-full"
+		x-transition:enter-end="translate-x-0"
+		x-transition:leave="transition duration-150"
+		x-transition:leave-start="translate-x-0"
+		x-transition:leave-end="translate-x-full"
+		aria-label="Notes"
+		class="fixed inset-y-0 right-0 z-40 w-96 max-w-[90vw] overflow-y-auto overscroll-contain bg-stone-50 shadow-xl dark:bg-stone-900 [&[x-cloak]]:hidden"
+	>
+		<div class="sticky top-0 z-10 flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-3 dark:border-stone-700 dark:bg-stone-900">
+			<span class="font-semibold">Notes</span>
+			<button
+				type="button"
+				aria-label="Close notes"
+				x-on:click="notes = false"
+				class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
+			>✕</button>
+		</div>
+		// Only times go to the server; it builds the quote from the alignment.
+		// The quote shown here is the browser's selection text, a preview.
+		<form
+			x-show="draft"
+			hx-post={ notesURL(b.Manifest.ID, true) }
+			hx-target="#notes"
+			hx-swap="innerHTML"
+			class="space-y-2 border-b border-stone-200 bg-amber-50 px-4 py-3 dark:border-stone-700 dark:bg-stone-800"
+		>
+			<input type="hidden" name="chapter" value={ itoa(cur) }/>
+			<input type="hidden" name="start" x-bind:value="draft ? draft.start : ''"/>
+			<input type="hidden" name="end" x-bind:value="draft ? draft.end : ''"/>
+			<div class="text-xs tabular-nums text-stone-500">
+				Ch { itoa(cur) } · <span x-text="draft ? clock(Number(draft.start)) : ''"></span>
+			</div>
+			<blockquote class="line-clamp-4 border-l-2 border-amber-500 pl-2 text-sm italic" x-text="draft ? draft.quote : ''"></blockquote>
+			<textarea
+				x-ref="noteText"
+				name="text"
+				rows="3"
+				maxlength="5000"
+				placeholder="Note (leave empty for a bookmark)"
+				class="w-full rounded border border-stone-300 bg-white p-2 text-sm dark:border-stone-600 dark:bg-stone-900"
+			></textarea>
+			<div class="flex justify-end gap-2 text-sm">
+				<button type="button" x-on:click="draft = null" class="rounded px-3 py-1 hover:bg-stone-200 dark:hover:bg-stone-700">Cancel</button>
+				<button type="submit" class="rounded bg-amber-500 px-3 py-1 font-semibold text-stone-900 hover:bg-amber-400">Save</button>
+			</div>
+		</form>
+		<div id="notes">
+			@NotesList(b, ns, true)
+		</div>
+	</aside>
+}
+
+// NotesList is the book's notes in reading order. Every note change returns
+// it as an htmx fragment swapped into #notes. In the reader its links swap
+// #reader (like chapter links) and its x-init tells sync.js to redraw the
+// underlines; on the book page they are plain links. data-ch/start/end are
+// what sync.js reads to underline noted words.
+templ NotesList(b bundle.Book, ns []notes.Note, inReader bool) {
+	<div
+		if inReader {
+			x-init="notesChanged()"
+		}
+	>
+		if len(ns) == 0 {
+			<p class="px-4 py-6 text-sm text-stone-500">No notes yet. Select text while reading to add one, or press 🔖.</p>
+		}
+		<ol class="divide-y divide-stone-200 dark:divide-stone-700">
+			for _, n := range ns {
+				<li
+					data-ch={ itoa(n.Chapter) }
+					data-start={ secs(n.Start) }
+					data-end={ secs(n.End) }
+					x-data="{ editing: false }"
+					class="px-4 py-3"
+				>
+					<a
+						href={ noteURL(b.Manifest.ID, n) }
+						if inReader {
+							hx-get={ string(noteURL(b.Manifest.ID, n)) }
+							hx-target="#reader"
+							hx-swap="outerHTML"
+							hx-push-url="true"
+							x-on:click="pick()"
+						}
+						class="block rounded hover:bg-stone-100 dark:hover:bg-stone-800"
+					>
+						<div class="flex justify-between gap-2 text-xs tabular-nums text-stone-500">
+							<span>Ch { itoa(n.Chapter) } · { clock(n.Start) }</span>
+							<span>{ noteDate(n) }</span>
+						</div>
+						<div class="truncate text-xs text-stone-500">{ chapterTitle(b, n.Chapter) }</div>
+						<blockquote class="mt-1 line-clamp-3 border-l-2 border-amber-500 pl-2 text-sm italic">{ n.Quote }</blockquote>
+					</a>
+					<div x-show="!editing" class="mt-2 text-sm">
+						if n.Bookmark() {
+							<p class="text-stone-500">🔖 Bookmark</p>
+						} else {
+							<p class="whitespace-pre-line">{ n.Text }</p>
+						}
+						<div class="mt-1 flex gap-3 text-xs text-stone-500">
+							<button
+								type="button"
+								x-on:click="editing = true; $nextTick(() => $refs.edit.focus())"
+								class="hover:underline"
+							>Edit</button>
+							<button
+								type="button"
+								hx-delete={ noteItemURL(b.Manifest.ID, n.ID, inReader) }
+								hx-confirm="Delete this note?"
+								hx-target="#notes"
+								hx-swap="innerHTML"
+								class="hover:text-red-600 hover:underline"
+							>Delete</button>
+						</div>
+					</div>
+					<form
+						x-cloak
+						x-show="editing"
+						hx-post={ noteItemURL(b.Manifest.ID, n.ID, inReader) }
+						hx-target="#notes"
+						hx-swap="innerHTML"
+						class="mt-2 space-y-2 [&[x-cloak]]:hidden"
+					>
+						<textarea
+							x-ref="edit"
+							name="text"
+							rows="3"
+							maxlength="5000"
+							placeholder="Note (leave empty for a bookmark)"
+							class="w-full rounded border border-stone-300 bg-white p-2 text-sm dark:border-stone-600 dark:bg-stone-900"
+						>{ n.Text }</textarea>
+						<div class="flex justify-end gap-2 text-sm">
+							<button type="button" x-on:click="editing = false" class="rounded px-3 py-1 hover:bg-stone-200 dark:hover:bg-stone-700">Cancel</button>
+							<button type="submit" class="rounded bg-amber-500 px-3 py-1 font-semibold text-stone-900 hover:bg-amber-400">Save</button>
+						</div>
+					</form>
+				</li>
+			}
+		</ol>
+	</div>
 }

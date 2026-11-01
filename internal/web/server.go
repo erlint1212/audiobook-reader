@@ -12,12 +12,15 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/a-h/templ"
 
 	"audiobook-reader/internal/bundle"
 	"audiobook-reader/internal/library"
+	"audiobook-reader/internal/notes"
 	"audiobook-reader/internal/progress"
 	"audiobook-reader/internal/web/views"
 )
@@ -30,13 +33,14 @@ var staticFS embed.FS
 type Server struct {
 	lib   *library.Shelf
 	store progress.Store
+	notes notes.Store
 	log   *slog.Logger
 	mux   *http.ServeMux
 }
 
 // New builds the router.
-func New(lib *library.Shelf, store progress.Store, log *slog.Logger) *Server {
-	s := &Server{lib: lib, store: store, log: log, mux: http.NewServeMux()}
+func New(lib *library.Shelf, store progress.Store, ns notes.Store, log *slog.Logger) *Server {
+	s := &Server{lib: lib, store: store, notes: ns, log: log, mux: http.NewServeMux()}
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		panic(err) // embed path is fixed at compile time
@@ -52,6 +56,9 @@ func New(lib *library.Shelf, store progress.Store, log *slog.Logger) *Server {
 	s.mux.HandleFunc("POST /refresh", s.handleRefreshLibrary)
 	s.mux.HandleFunc("POST /books/{id}/refresh", s.handleRefreshBook)
 	s.mux.HandleFunc("GET /books/{id}/ch/{n}/next", s.handleNextLink)
+	s.mux.HandleFunc("POST /books/{id}/notes", s.handleNoteAdd)
+	s.mux.HandleFunc("POST /books/{id}/notes/{nid}", s.handleNoteUpdate)
+	s.mux.HandleFunc("DELETE /books/{id}/notes/{nid}", s.handleNoteDelete)
 	return s
 }
 
@@ -108,7 +115,7 @@ func (s *Server) handleBook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Warn("read progress", "book", b.Manifest.ID, "err", err)
 	}
-	s.render(w, r, views.BookPage(b, pos, has && err == nil))
+	s.render(w, r, views.BookPage(b, pos, has && err == nil, s.bookNotes(b)))
 }
 
 func (s *Server) handleCover(w http.ResponseWriter, r *http.Request) {
@@ -135,12 +142,166 @@ func (s *Server) handleChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := s.startTime(r, b, ch)
+	ns := s.bookNotes(b)
 	// htmx chapter switches only need the reader section.
 	if r.Header.Get("HX-Request") == "true" {
-		s.render(w, r, views.Reader(b, ch, a, start))
+		s.render(w, r, views.Reader(b, ch, a, start, ns))
 		return
 	}
-	s.render(w, r, views.ReaderPage(b, ch, a, start))
+	s.render(w, r, views.ReaderPage(b, ch, a, start, ns))
+}
+
+// bookNotes lists the book's notes. A broken notes file must not block
+// reading, so it is logged and shown as no notes.
+func (s *Server) bookNotes(b bundle.Book) []notes.Note {
+	ns, err := s.notes.List(b.Manifest.ID)
+	if err != nil {
+		s.log.Warn("read notes", "book", b.Manifest.ID, "err", err)
+		return nil
+	}
+	return ns
+}
+
+// maxNoteRunes caps a note's own text.
+const maxNoteRunes = 5000
+
+// handleNoteAdd saves a note on the words from start to end (both word
+// start times). The client sends only times; the quote comes from the
+// alignment, so stored text is always text from the book.
+func (s *Server) handleNoteAdd(w http.ResponseWriter, r *http.Request) {
+	b, ok := s.book(w, r)
+	if !ok {
+		return
+	}
+	chIdx, err1 := strconv.Atoi(r.FormValue("chapter"))
+	start, err2 := strconv.ParseFloat(r.FormValue("start"), 64)
+	end, err3 := strconv.ParseFloat(r.FormValue("end"), 64)
+	text, okText := noteText(r)
+	if err1 != nil || err2 != nil || err3 != nil || !validTime(start) || !validTime(end) || start > end || !okText {
+		http.Error(w, "bad note", http.StatusBadRequest)
+		return
+	}
+	ch, err := b.Chapter(chIdx)
+	if err != nil || end > ch.DurationS {
+		http.Error(w, "bad chapter", http.StatusBadRequest)
+		return
+	}
+	a, err := b.LoadAlignment(ch)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	quote := quoteFor(a, start, end)
+	if quote == "" {
+		http.Error(w, "no words in range", http.StatusBadRequest)
+		return
+	}
+	n := notes.Note{Chapter: chIdx, Start: start, End: end, Quote: quote, Text: text}
+	if _, err := s.notes.Add(b.Manifest.ID, n); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.renderNotes(w, r, b)
+}
+
+func (s *Server) handleNoteUpdate(w http.ResponseWriter, r *http.Request) {
+	b, id, ok := s.noteID(w, r)
+	if !ok {
+		return
+	}
+	text, ok := noteText(r)
+	if !ok {
+		http.Error(w, "bad note", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.notes.Update(b.Manifest.ID, id, text); err != nil {
+		s.noteFail(w, r, err)
+		return
+	}
+	s.renderNotes(w, r, b)
+}
+
+func (s *Server) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
+	b, id, ok := s.noteID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.notes.Delete(b.Manifest.ID, id); err != nil {
+		s.noteFail(w, r, err)
+		return
+	}
+	s.renderNotes(w, r, b)
+}
+
+// renderNotes answers every note change with the fresh list. Form field
+// view=reader makes its links swap #reader instead of loading a page.
+func (s *Server) renderNotes(w http.ResponseWriter, r *http.Request, b bundle.Book) {
+	ns, err := s.notes.List(b.Manifest.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, r, views.NotesList(b, ns, r.FormValue("view") == "reader"))
+}
+
+func (s *Server) noteID(w http.ResponseWriter, r *http.Request) (bundle.Book, string, bool) {
+	b, ok := s.book(w, r)
+	if !ok {
+		return bundle.Book{}, "", false
+	}
+	id := r.PathValue("nid")
+	if !notes.ValidID(id) {
+		http.NotFound(w, r)
+		return bundle.Book{}, "", false
+	}
+	return b, id, true
+}
+
+func (s *Server) noteFail(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, notes.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	s.fail(w, err)
+}
+
+// noteText is the trimmed "text" field; ok is false when it is too long.
+func noteText(r *http.Request) (string, bool) {
+	t := strings.TrimSpace(r.FormValue("text"))
+	return t, utf8.RuneCountInString(t) <= maxNoteRunes
+}
+
+const (
+	maxQuoteWords    = 60 // longer selections are cut with "…"
+	bookmarkQuoteLen = 15 // a bookmark quotes this many words from its spot
+)
+
+// quoteFor joins the words whose start lies in [start, end]. A bookmark
+// (start == end) quotes a few words on from the first word at or after
+// start, within that block.
+// Starts never go backwards (bundle.Validate), so the first word past end
+// ends the quote.
+func quoteFor(a bundle.Alignment, start, end float64) string {
+	var out []string
+	bookmark := start == end
+	for _, blk := range a.Blocks {
+		for _, wd := range blk.Words {
+			if wd.S < start {
+				continue
+			}
+			if wd.S > end && !(bookmark && len(out) < bookmarkQuoteLen) {
+				return strings.Join(out, " ")
+			}
+			if len(out) == maxQuoteWords {
+				return strings.Join(out, " ") + " …"
+			}
+			out = append(out, wd.T)
+		}
+		if bookmark && len(out) > 0 {
+			break
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 // startTime prefers ?t=, then saved progress for this chapter, then 0.
@@ -185,7 +346,11 @@ func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			s.log.Warn("close audio", "path", p, "err", err)
+		}
+	}()
 	info, err := f.Stat()
 	if err != nil {
 		s.fail(w, err)

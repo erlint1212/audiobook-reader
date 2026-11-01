@@ -6,6 +6,8 @@ import (
 
 	"github.com/a-h/templ"
 
+	"audiobook-reader/internal/bundle"
+	"audiobook-reader/internal/notes"
 	"audiobook-reader/internal/progress"
 )
 
@@ -44,3 +46,36 @@ func resumeURL(id string, p progress.Position) templ.SafeURL {
 func refreshURL(id string) string { return "/books/" + id + "/refresh" }
 
 func nextURL(id string, ch int) string { return fmt.Sprintf("/books/%s/ch/%d/next", id, ch) }
+
+// viewQuery tells note handlers which list to render back: links that swap
+// #reader, or plain links for the book page.
+func viewQuery(inReader bool) string {
+	if inReader {
+		return "?view=reader"
+	}
+	return ""
+}
+
+func notesURL(id string, inReader bool) string {
+	return "/books/" + id + "/notes" + viewQuery(inReader)
+}
+
+func noteItemURL(id, noteID string, inReader bool) string {
+	return "/books/" + id + "/notes/" + noteID + viewQuery(inReader)
+}
+
+// noteURL opens the reader at the note's first word.
+func noteURL(id string, n notes.Note) templ.SafeURL {
+	return templ.URL(fmt.Sprintf("/books/%s/ch/%d?t=%s", id, n.Chapter, secs(n.Start)))
+}
+
+// chapterTitle is the title of chapter i, or "" if the book lost it.
+func chapterTitle(b bundle.Book, i int) string {
+	ch, err := b.Chapter(i)
+	if err != nil {
+		return ""
+	}
+	return ch.Title
+}
+
+func noteDate(n notes.Note) string { return n.Created.Local().Format("2 Jan 2006") }
