@@ -10,7 +10,10 @@ templ LibraryPage(books []bundle.Book) {
 	@Layout("Library") {
 		<div class="mb-6 flex items-center justify-between">
 			<h1 class="text-2xl font-bold">Library</h1>
-			@refreshButton("/refresh")
+			<div class="flex flex-wrap items-center gap-2">
+				@backupControls()
+				@refreshButton("/refresh")
+			</div>
 		</div>
 		if len(books) == 0 {
 			<p class="text-stone-500">No books found. Point <code>-library</code> at a folder of forge bundles.</p>
@@ -285,6 +288,20 @@ templ refreshButton(action string) {
 	<form method="post" action={ templ.SafeURL(action) }>
 		<button type="submit" class="rounded border border-stone-300 px-3 py-1 text-sm hover:bg-stone-200 dark:border-stone-600 dark:hover:bg-stone-700">
 			Refresh
+		</button>
+	</form>
+}
+
+// backupControls lets the user download all progress and notes as one file
+// and merge such a file back in. Plain links and forms: no JS.
+templ backupControls() {
+	<a href="/export" download class="rounded border border-stone-300 px-3 py-1 text-sm hover:bg-stone-200 dark:border-stone-600 dark:hover:bg-stone-700">
+		Export
+	</a>
+	<form method="post" action="/import" enctype="multipart/form-data" class="flex items-center gap-2">
+		<input type="file" name="file" accept="application/json,.json" required aria-label="Backup file" class="w-48 text-sm text-stone-500 file:mr-2 file:rounded file:border file:border-stone-300 file:bg-transparent file:px-3 file:py-1 file:text-sm hover:file:bg-stone-200 dark:file:border-stone-600 dark:hover:file:bg-stone-700"/>
+		<button type="submit" class="rounded border border-stone-300 px-3 py-1 text-sm hover:bg-stone-200 dark:border-stone-600 dark:hover:bg-stone-700">
+			Import
 		</button>
 	</form>
 }

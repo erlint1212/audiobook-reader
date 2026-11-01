@@ -183,7 +183,7 @@ func (m Manifest) Validate() error {
 	if !supported(m.SchemaVersion) {
 		return fmt.Errorf("unsupported schema_version %d", m.SchemaVersion)
 	}
-	if !isSlug(m.ID) {
+	if !IsSlug(m.ID) {
 		return fmt.Errorf("invalid id %q", m.ID)
 	}
 	if m.Title == "" {
@@ -289,8 +289,8 @@ func decodeStrict(path string, v any) error {
 
 func supported(v int) bool { return v >= MinSchemaVersion && v <= SchemaVersion }
 
-// isSlug reports whether s matches ^[a-z0-9][a-z0-9-]*$ without regex.
-func isSlug(s string) bool {
+// IsSlug reports whether s matches ^[a-z0-9][a-z0-9-]*$ without regex.
+func IsSlug(s string) bool {
 	if s == "" || s[0] == '-' {
 		return false
 	}

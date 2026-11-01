@@ -2,6 +2,7 @@
 package web
 
 import (
+	"bytes"
 	"embed"
 	"errors"
 	"io/fs"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/a-h/templ"
 
+	"audiobook-reader/internal/backup"
 	"audiobook-reader/internal/bundle"
 	"audiobook-reader/internal/library"
 	"audiobook-reader/internal/notes"
@@ -54,6 +56,8 @@ func New(lib *library.Shelf, store progress.Store, ns notes.Store, log *slog.Log
 	s.mux.HandleFunc("GET /books/{id}/audio/{n}", s.handleAudio)
 	s.mux.HandleFunc("POST /books/{id}/progress", s.handleProgress)
 	s.mux.HandleFunc("POST /refresh", s.handleRefreshLibrary)
+	s.mux.HandleFunc("GET /export", s.handleExport)
+	s.mux.HandleFunc("POST /import", s.handleImport)
 	s.mux.HandleFunc("POST /books/{id}/refresh", s.handleRefreshBook)
 	s.mux.HandleFunc("GET /books/{id}/ch/{n}/next", s.handleNextLink)
 	s.mux.HandleFunc("POST /books/{id}/notes", s.handleNoteAdd)
@@ -408,6 +412,54 @@ func (s *Server) chapter(w http.ResponseWriter, r *http.Request) (bundle.Book, b
 		return bundle.Book{}, bundle.Chapter{}, false
 	}
 	return b, ch, true
+}
+
+// maxImport caps an uploaded backup; real ones are far smaller.
+const maxImport = 16 << 20
+
+// handleExport sends all progress and notes as one JSON file download.
+// It is encoded to memory first so a failure is a clean 500, not half a file.
+func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	e, err := backup.Build(s.store, s.notes, now)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	var buf bytes.Buffer
+	if err := backup.Encode(&buf, e); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="reader-data-`+now.Format(time.DateOnly)+`.json"`)
+	if _, err := buf.WriteTo(w); err != nil {
+		s.log.Warn("export write", "err", err)
+	}
+}
+
+// handleImport merges an uploaded export (form file "file") into the
+// stores, then goes back to the library. Merging never deletes data.
+func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxImport)
+	f, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "missing or too large backup file", http.StatusBadRequest)
+		return
+	}
+	e, err := backup.Decode(f)
+	if cerr := f.Close(); cerr != nil {
+		s.log.Warn("import close", "err", cerr)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := backup.Apply(e, s.store, s.notes); err != nil {
+		s.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, c templ.Component) {

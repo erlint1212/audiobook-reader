@@ -13,4 +13,9 @@ make run LIBRARY=/path/to/library
 Keys: <kbd>Space</kbd> play/pause, <kbd>←</kbd>/<kbd>→</kbd> ±10 s.
 Scroll by hand to pause follow mode; "Back to reading position" turns it back on.
 
+Progress and notes live as JSON files in `-data` (default: your XDG state
+dir), not in the browser. Back them up by copying that folder, or use
+**Export** on the library page to download one file; **Import** merges such a
+file back in without deleting anything newer.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md).

@@ -7,7 +7,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
+
+// Stems lists the names, minus ext, of regular files in dir ending in ext,
+// sorted. Temp files from Write end in ".tmp", so they never match ".json".
+// A missing dir is no files.
+func Stems(dir, ext string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("atomicfile: %w", err)
+	}
+	var stems []string
+	for _, e := range entries {
+		stem, ok := strings.CutSuffix(e.Name(), ext)
+		if ok && e.Type().IsRegular() {
+			stems = append(stems, stem)
+		}
+	}
+	slices.Sort(stems)
+	return stems, nil
+}
 
 // Write puts data at dir/name. The temp file lives in dir, so the rename
 // stays on one filesystem and is atomic.

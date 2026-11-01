@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"audiobook-reader/internal/atomicfile"
+	"audiobook-reader/internal/bundle"
 )
 
 // Position is where the listener stopped.
@@ -59,6 +61,16 @@ func (s Store) Save(bookID string, pos Position) error {
 		return fmt.Errorf("progress: %w", err)
 	}
 	return nil
+}
+
+// Books lists the ids of books with a saved position, sorted. Files whose
+// name is not a slug are not ours and are skipped.
+func (s Store) Books() ([]string, error) {
+	stems, err := atomicfile.Stems(s.dir, ".json")
+	if err != nil {
+		return nil, fmt.Errorf("progress: %w", err)
+	}
+	return slices.DeleteFunc(stems, func(id string) bool { return !bundle.IsSlug(id) }), nil
 }
 
 func (s Store) file(bookID string) string { return filepath.Join(s.dir, bookID+".json") }

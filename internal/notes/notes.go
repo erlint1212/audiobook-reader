@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"audiobook-reader/internal/atomicfile"
+	"audiobook-reader/internal/bundle"
 )
 
 // ErrNotFound is returned for an unknown note id.
@@ -117,6 +118,43 @@ func (s Store) Delete(bookID, id string) error {
 		return ErrNotFound
 	}
 	return s.write(bookID, kept)
+}
+
+// Merge adds notes from in to the book's notes, keeping ids. When both
+// sides have an id, the one updated later wins. Nothing is removed, so
+// merging an old backup never loses newer notes. Bad ids fail the whole merge.
+func (s Store) Merge(bookID string, in []Note) error {
+	for _, n := range in {
+		if !ValidID(n.ID) {
+			return fmt.Errorf("notes %s: invalid id %q", bookID, n.ID)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ns, err := s.read(bookID)
+	if err != nil {
+		return err
+	}
+	for _, n := range in {
+		i := slices.IndexFunc(ns, func(o Note) bool { return o.ID == n.ID })
+		switch {
+		case i < 0:
+			ns = append(ns, n)
+		case n.Updated.After(ns[i].Updated):
+			ns[i] = n
+		}
+	}
+	return s.write(bookID, ns)
+}
+
+// Books lists the ids of books with a notes file, sorted. Files whose name
+// is not a slug are not ours and are skipped.
+func (s Store) Books() ([]string, error) {
+	stems, err := atomicfile.Stems(s.dir, ".json")
+	if err != nil {
+		return nil, fmt.Errorf("notes: %w", err)
+	}
+	return slices.DeleteFunc(stems, func(id string) bool { return !bundle.IsSlug(id) }), nil
 }
 
 // ValidID reports whether id looks like an id from Add: lowercase hex of idLen.

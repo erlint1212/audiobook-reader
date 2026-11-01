@@ -3,8 +3,31 @@ package atomicfile
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
+
+func TestStems(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"b.json", "a.json", "a.json.123.tmp", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "d.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Stems(dir, ".json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"a", "b"}; !slices.Equal(got, want) {
+		t.Fatalf("Stems = %v, want %v", got, want)
+	}
+	if got, err := Stems(filepath.Join(dir, "missing"), ".json"); err != nil || got != nil {
+		t.Fatalf("missing dir: Stems = %v, %v", got, err)
+	}
+}
 
 func TestWriteOverwritesWithoutLeftovers(t *testing.T) {
 	dir := t.TempDir()

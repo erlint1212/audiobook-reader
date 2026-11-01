@@ -1,9 +1,11 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -556,5 +558,68 @@ func TestQuoteFor(t *testing.T) {
 	got := quoteFor(long, 0, 1000)
 	if !strings.HasSuffix(got, " …") || strings.Count(got, "w") != maxQuoteWords {
 		t.Errorf("long quote not cut: %q", got)
+	}
+}
+
+// upload builds a POST /import with body as the "file" form field.
+func upload(t *testing.T, body []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "backup.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/import", &buf)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	return r
+}
+
+func TestExportImport(t *testing.T) {
+	src, store := newTestServer(t)
+	if err := store.Save("demo", progress.Position{Chapter: 2, Time: 1.5}); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"chapter": {"1"}, "start": {"0.000"}, "end": {"0.000"}, "text": {"carry me"}}
+	r := httptest.NewRequest("POST", "/books/demo/notes", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if w := do(src, r); w.Code != http.StatusOK {
+		t.Fatalf("add note = %d %s", w.Code, w.Body)
+	}
+
+	lib := do(src, httptest.NewRequest("GET", "/", nil)).Body.String()
+	if !strings.Contains(lib, `href="/export"`) || !strings.Contains(lib, `action="/import"`) {
+		t.Error("library page missing export/import controls")
+	}
+
+	w := do(src, httptest.NewRequest("GET", "/export", nil))
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Disposition"), `attachment; filename="reader-data-`) {
+		t.Fatalf("export = %d, disposition %q", w.Code, w.Header().Get("Content-Disposition"))
+	}
+	exported := w.Body.Bytes()
+
+	dst, _ := newTestServer(t)
+	if w := do(dst, upload(t, exported)); w.Code != http.StatusSeeOther {
+		t.Fatalf("import = %d %s", w.Code, w.Body)
+	}
+	book := do(dst, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	if !strings.Contains(book, "carry me") || !strings.Contains(book, "/books/demo/ch/2?t=1.500") {
+		t.Error("imported note or progress missing from book page")
+	}
+
+	for name, req := range map[string]*http.Request{
+		"bad json": upload(t, []byte(`{"version": 99}`)),
+		"too big":  upload(t, bytes.Repeat([]byte(" "), maxImport+1)),
+		"no file":  httptest.NewRequest("POST", "/import", nil),
+	} {
+		if w := do(dst, req); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: import = %d, want 400", name, w.Code)
+		}
 	}
 }

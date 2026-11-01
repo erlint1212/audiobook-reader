@@ -182,8 +182,8 @@ func TestIsSlug(t *testing.T) {
 	for s, want := range map[string]bool{
 		"demo": true, "a-1": true, "": false, "-a": false, "A": false, "a b": false, "ä": false,
 	} {
-		if got := isSlug(s); got != want {
-			t.Errorf("isSlug(%q) = %v, want %v", s, got, want)
+		if got := IsSlug(s); got != want {
+			t.Errorf("IsSlug(%q) = %v, want %v", s, got, want)
 		}
 	}
 }

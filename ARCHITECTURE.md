@@ -76,7 +76,7 @@ underline ranges. The book page shows the same list with plain links.
 | Client behaviour | Alpine.js (CDN, pinned) | Word sync needs ~100 lines; Alpine keeps them declarative. |
 | Styling | TailwindCSS v4 standalone CLI from nixpkgs | Only Tailwind; no npm. All styling lives in templ files. |
 | Assets | `go:embed internal/web/static` | Binary is self-contained (after `make css`). |
-| State | One JSON file per book in `-data` (XDG state dir); notes in `-data/notes/` | Single-user; atomic temp+rename writes; no DB. |
+| State | One JSON file per book in `-data` (XDG state dir); notes in `-data/notes/` | Single-user; atomic temp+rename writes; no DB. Backup = copy `-data`, or Export (one JSON file). |
 
 ## Packages
 
@@ -93,7 +93,12 @@ underline ranges. The book page shows the same list with plain links.
 - `internal/notes`: per-book notes/bookmarks (one JSON array per book).
   Changes are read-modify-write, so `Store` holds a mutex. Ids are 16 hex
   chars from `crypto/rand`; handlers check `ValidID` before use.
-- `internal/atomicfile`: temp file + rename, shared by both stores.
+- `internal/atomicfile`: temp file + rename, and `Stems` (list `*.json` ids), shared by both stores.
+- `internal/backup`: export format (`version` 1: `{version, exported, books: {id: {progress, notes}}}`).
+  `Build` gathers every book with data on disk, in the library or not. `Decode` is strict
+  (unknown fields, wrong version, non-slug id → error). `Apply` **merges, never deletes**:
+  progress is replaced only by a later `updated`, notes merge by id (later `updated` wins),
+  so importing an old backup cannot lose newer data. Imported quotes are trusted as-is.
 - `internal/web`: handlers + routes. `views/` holds templ components and
   `static/` holds `sync.js` + Tailwind input.
 
@@ -114,6 +119,8 @@ underline ranges. The book page shows the same list with plain links.
 | `POST /books/{id}/notes[?view=reader]` | form `chapter`, `start`, `end` (word starts), `text` → `NotesList` |
 | `POST /books/{id}/notes/{nid}[?view=reader]` | form `text` → update, `NotesList` |
 | `DELETE /books/{id}/notes/{nid}[?view=reader]` | delete → `NotesList` (htmx 4 sends no form data with DELETE, hence the query) |
+| `GET /export` | all progress + notes as `reader-data-YYYY-MM-DD.json` download |
+| `POST /import` | multipart field `file` (max 16 MiB) → merge via `backup.Apply` → 303 `/` |
 
 ## Rules for working in this repo
 
@@ -140,7 +147,7 @@ underline ranges. The book page shows the same list with plain links.
 8. **htmx 4 is not htmx 2.** Attribute inheritance is explicit, and some
    attributes were renamed (`hx-disable`, `hx-config`, ...). Check the v4 docs
    before adding attributes.
-9. **No regex.** Validation is plain Go (see `isSlug`).
+9. **No regex.** Validation is plain Go (see `bundle.IsSlug`).
 
 ## Dev on NixOS
 
