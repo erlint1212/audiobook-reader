@@ -74,6 +74,8 @@ func TestRoutesStatus(t *testing.T) {
 		"/books/figures/ch/1/img/-1": 404,
 		"/books/figures/ch/2/img/0":  404,
 		"/books/demo/ch/1/img/0":     404,
+		"/books/demo/notes/export":   200,
+		"/books/nope/notes/export":   404,
 	}
 	for path, want := range cases {
 		if got := do(s, httptest.NewRequest("GET", path, nil)).Code; got != want {
@@ -562,7 +564,9 @@ func TestQuoteFor(t *testing.T) {
 }
 
 // upload builds a POST /import with body as the "file" form field.
-func upload(t *testing.T, body []byte) *http.Request {
+func upload(t *testing.T, body []byte) *http.Request { t.Helper(); return uploadTo(t, "/import", body) }
+
+func uploadTo(t *testing.T, path string, body []byte) *http.Request {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -576,7 +580,7 @@ func upload(t *testing.T, body []byte) *http.Request {
 	if err := mw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest("POST", "/import", &buf)
+	r := httptest.NewRequest("POST", path, &buf)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
 	return r
 }
@@ -621,5 +625,94 @@ func TestExportImport(t *testing.T) {
 		if w := do(dst, req); w.Code != http.StatusBadRequest {
 			t.Errorf("%s: import = %d, want 400", name, w.Code)
 		}
+	}
+}
+
+func TestNoteCounts(t *testing.T) {
+	s, ns := newNotesServer(t)
+	for _, n := range []notes.Note{
+		{Chapter: 1, Start: 1, End: 1, Quote: "a", Text: "x"},
+		{Chapter: 1, Start: 2, End: 2, Quote: "b", Text: "y"},
+		{Chapter: 1, Start: 3, End: 3, Quote: "c"},
+	} {
+		if _, err := ns.Add("demo", n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{"/books/demo", "/books/demo/ch/2"} {
+		body := do(s, httptest.NewRequest("GET", path, nil)).Body.String()
+		for _, want := range []string{`id="note-count-1"`, "✎ 2", "🔖 1", `id="note-count-2"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing %q", path, want)
+			}
+		}
+	}
+
+	// Every note change sends all counts out of band, zeros included.
+	w := postForm(s, "/books/demo/notes?view=reader", url.Values{"chapter": {"2"}, "start": {"0"}, "end": {"0"}, "text": {"z"}})
+	body := w.Body.String()
+	if w.Code != 200 || strings.Count(body, `hx-swap-oob="true"`) != 2 || !strings.Contains(body, "✎ 1") {
+		t.Fatalf("note add response = %d %s", w.Code, body)
+	}
+}
+
+func TestBookPageFoldsNotes(t *testing.T) {
+	s, ns := newNotesServer(t)
+	for i := range 4 {
+		if _, err := ns.Add("demo", notes.Note{Chapter: 1, Start: float64(i), End: float64(i), Quote: "q"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	book := do(s, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	if !strings.Contains(book, "Show all 4 notes") || strings.Count(book, `x-show="all"`) != 2 { // 4th note + "Show fewer"
+		t.Errorf("book page should fold the 4th note behind Show all")
+	}
+	reader := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	if strings.Contains(reader, "Show all") || strings.Contains(reader, `x-show="all"`) {
+		t.Error("reader drawer must not fold notes")
+	}
+}
+
+func TestShareNotes(t *testing.T) {
+	src, store := newTestServer(t)
+	form := url.Values{"chapter": {"1"}, "start": {"0.000"}, "end": {"0.000"}, "text": {"for you"}}
+	if w := postForm(src, "/books/demo/notes", form); w.Code != http.StatusOK {
+		t.Fatalf("add note = %d %s", w.Code, w.Body)
+	}
+	if err := store.Save("demo", progress.Position{Chapter: 2, Time: 1.5}); err != nil {
+		t.Fatal(err)
+	}
+	book := do(src, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	if !strings.Contains(book, `action="/books/demo/notes/export"`) || !strings.Contains(book, `action="/books/demo/notes/import"`) {
+		t.Error("book page missing share controls")
+	}
+
+	bad := do(src, httptest.NewRequest("GET", "/books/demo/notes/export?name="+strings.Repeat("x", 61), nil))
+	if bad.Code != http.StatusBadRequest {
+		t.Errorf("long name = %d, want 400", bad.Code)
+	}
+	w := do(src, httptest.NewRequest("GET", "/books/demo/notes/export?name=+Kari+", nil))
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Disposition"), `attachment; filename="demo-notes-`) {
+		t.Fatalf("export = %d, disposition %q", w.Code, w.Header().Get("Content-Disposition"))
+	}
+	exported := w.Body.Bytes()
+	if !bytes.Contains(exported, []byte(`"author": "Kari"`)) || bytes.Contains(exported, []byte(`"chapter": 2,`)) {
+		t.Errorf("export should stamp author and carry no progress: %s", exported)
+	}
+
+	dst, dstStore := newTestServer(t)
+	if w := do(dst, uploadTo(t, "/books/figures/notes/import", exported)); w.Code != http.StatusBadRequest {
+		t.Errorf("wrong-book import = %d, want 400", w.Code)
+	}
+	w = do(dst, uploadTo(t, "/books/demo/notes/import", exported))
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/books/demo" {
+		t.Fatalf("import = %d %q %s", w.Code, w.Header().Get("Location"), w.Body)
+	}
+	got := do(dst, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	if !strings.Contains(got, "for you") || !strings.Contains(got, "from Kari") {
+		t.Error("imported note or its author missing from book page")
+	}
+	if _, ok, err := dstStore.Get("demo"); err != nil || ok {
+		t.Errorf("notes import must not touch progress: ok %v err %v", ok, err)
 	}
 }

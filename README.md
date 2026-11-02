@@ -18,4 +18,8 @@ dir), not in the browser. Back them up by copying that folder, or use
 **Export** on the library page to download one file; **Import** merges such a
 file back in without deleting anything newer.
 
+To share notes on one book, use **Export notes** on the book page (add your
+name so the receiver sees who wrote them). They import the file with
+**Import** next to it; only notes are merged, never their reading position.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md).

@@ -63,6 +63,8 @@ func New(lib *library.Shelf, store progress.Store, ns notes.Store, log *slog.Log
 	s.mux.HandleFunc("POST /books/{id}/notes", s.handleNoteAdd)
 	s.mux.HandleFunc("POST /books/{id}/notes/{nid}", s.handleNoteUpdate)
 	s.mux.HandleFunc("DELETE /books/{id}/notes/{nid}", s.handleNoteDelete)
+	s.mux.HandleFunc("GET /books/{id}/notes/export", s.handleNotesExport)
+	s.mux.HandleFunc("POST /books/{id}/notes/import", s.handleNotesImport)
 	return s
 }
 
@@ -237,7 +239,8 @@ func (s *Server) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 	s.renderNotes(w, r, b)
 }
 
-// renderNotes answers every note change with the fresh list. Form field
+// renderNotes answers every note change with the fresh list and the
+// chapter counts (out of band, see views.NotesUpdate). Form field
 // view=reader makes its links swap #reader instead of loading a page.
 func (s *Server) renderNotes(w http.ResponseWriter, r *http.Request, b bundle.Book) {
 	ns, err := s.notes.List(b.Manifest.ID)
@@ -245,7 +248,7 @@ func (s *Server) renderNotes(w http.ResponseWriter, r *http.Request, b bundle.Bo
 		s.fail(w, err)
 		return
 	}
-	s.render(w, r, views.NotesList(b, ns, r.FormValue("view") == "reader"))
+	s.render(w, r, views.NotesUpdate(b, ns, r.FormValue("view") == "reader"))
 }
 
 func (s *Server) noteID(w http.ResponseWriter, r *http.Request) (bundle.Book, string, bool) {
@@ -426,26 +429,79 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	s.download(w, e, "reader-data-"+now.Format(time.DateOnly)+".json")
+}
+
+// handleNotesExport sends one book's notes, no progress, as a file to give
+// to someone else. Query "name" (optional) is stamped on the user's own
+// notes so the receiver sees who wrote them.
+func (s *Server) handleNotesExport(w http.ResponseWriter, r *http.Request) {
+	b, ok := s.book(w, r)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if !backup.ValidAuthor(name) {
+		http.Error(w, "name too long or has control characters", http.StatusBadRequest)
+		return
+	}
+	now := time.Now()
+	e, err := backup.BuildBook(s.notes, b.Manifest.ID, name, now)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.download(w, e, b.Manifest.ID+"-notes-"+now.Format(time.DateOnly)+".json")
+}
+
+// download sends e as a JSON attachment. It is encoded to memory first so
+// a failure is a clean 500, not half a file. filename must be built from
+// validated parts only (slug ids, dates): it is not escaped.
+func (s *Server) download(w http.ResponseWriter, e backup.Export, filename string) {
 	var buf bytes.Buffer
 	if err := backup.Encode(&buf, e); err != nil {
 		s.fail(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", `attachment; filename="reader-data-`+now.Format(time.DateOnly)+`.json"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	if _, err := buf.WriteTo(w); err != nil {
 		s.log.Warn("export write", "err", err)
 	}
 }
 
-// handleImport merges an uploaded export (form file "file") into the
-// stores, then goes back to the library. Merging never deletes data.
-func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+// handleNotesImport merges the notes for this book from an uploaded export
+// (form file "file"), then goes back to the book page. Progress and other
+// books in the file are ignored, so a friend's file never moves your place.
+func (s *Server) handleNotesImport(w http.ResponseWriter, r *http.Request) {
+	b, ok := s.book(w, r)
+	if !ok {
+		return
+	}
+	e, ok := s.upload(w, r)
+	if !ok {
+		return
+	}
+	d, ok := e.Books[b.Manifest.ID]
+	if !ok {
+		http.Error(w, "file has no notes for this book", http.StatusBadRequest)
+		return
+	}
+	if err := s.notes.Merge(b.Manifest.ID, d.Notes); err != nil {
+		s.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, "/books/"+b.Manifest.ID, http.StatusSeeOther)
+}
+
+// upload reads and decodes form file "file" (max maxImport). On false the
+// error response is already written.
+func (s *Server) upload(w http.ResponseWriter, r *http.Request) (backup.Export, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxImport)
 	f, _, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "missing or too large backup file", http.StatusBadRequest)
-		return
+		http.Error(w, "missing or too large file", http.StatusBadRequest)
+		return backup.Export{}, false
 	}
 	e, err := backup.Decode(f)
 	if cerr := f.Close(); cerr != nil {
@@ -453,6 +509,16 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return backup.Export{}, false
+	}
+	return e, true
+}
+
+// handleImport merges an uploaded export (form file "file") into the
+// stores, then goes back to the library. Merging never deletes data.
+func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.upload(w, r)
+	if !ok {
 		return
 	}
 	if err := backup.Apply(e, s.store, s.notes); err != nil {

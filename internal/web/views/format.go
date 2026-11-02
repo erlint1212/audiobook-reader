@@ -79,3 +79,29 @@ func chapterTitle(b bundle.Book, i int) string {
 }
 
 func noteDate(n notes.Note) string { return n.Created.Local().Format("2 Jan 2006") }
+
+func notesExportURL(id string) string { return "/books/" + id + "/notes/export" }
+func notesImportURL(id string) string { return "/books/" + id + "/notes/import" }
+
+// chapterNotes counts one chapter's notes with text and its bookmarks.
+type chapterNotes struct{ Notes, Marks int }
+
+// countNotes tallies notes per chapter index.
+func countNotes(ns []notes.Note) map[int]chapterNotes {
+	out := map[int]chapterNotes{}
+	for _, n := range ns {
+		c := out[n.Chapter]
+		if n.Bookmark() {
+			c.Marks++
+		} else {
+			c.Notes++
+		}
+		out[n.Chapter] = c
+	}
+	return out
+}
+
+func noteCountID(ch int) string { return "note-count-" + itoa(ch) }
+
+// notesPreview is how many notes the book page shows before "Show all".
+const notesPreview = 3

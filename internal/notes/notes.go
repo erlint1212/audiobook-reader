@@ -27,7 +27,8 @@ const idLen = 16
 
 // Note marks a passage: words from Start to End (seconds) in Chapter.
 // Quote is the passage text, built by the server from the alignment.
-// An empty Text makes it a bookmark.
+// An empty Text makes it a bookmark. Author is empty for the user's own
+// notes and holds the sender's name for notes imported from someone else.
 type Note struct {
 	ID      string    `json:"id"`
 	Chapter int       `json:"chapter"`
@@ -35,6 +36,7 @@ type Note struct {
 	End     float64   `json:"end"`
 	Quote   string    `json:"quote"`
 	Text    string    `json:"text"`
+	Author  string    `json:"author,omitempty"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 }

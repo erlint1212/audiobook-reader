@@ -46,22 +46,31 @@ templ BookPage(b bundle.Book, pos progress.Position, hasPos bool, ns []notes.Not
 				Resume chapter { itoa(pos.Chapter) } at { clock(pos.Time) }
 			</a>
 		}
+		<div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+			<h2 class="text-lg font-semibold">Notes</h2>
+			@shareNotes(b.Manifest.ID)
+		</div>
 		if len(ns) > 0 {
-			<h2 class="mb-2 text-lg font-semibold">Notes</h2>
 			<div id="notes" class="mb-8 rounded-lg border border-stone-200 dark:border-stone-700">
 				@NotesList(b, ns, false)
 			</div>
-			<h2 class="mb-2 text-lg font-semibold">Chapters</h2>
+		} else {
+			<p class="mb-8 text-sm text-stone-500">No notes yet. Select text while reading to add one, or import notes someone sent you.</p>
 		}
+		<h2 class="mb-2 text-lg font-semibold">Chapters</h2>
 		<ol class="divide-y divide-stone-200 dark:divide-stone-700">
+			{{ counts := countNotes(ns) }}
 			for _, ch := range b.Manifest.Chapters {
 				<li>
-					<a href={ chapterURL(b.Manifest.ID, ch.Index) } class="flex justify-between py-2 hover:underline">
+					<a href={ chapterURL(b.Manifest.ID, ch.Index) } class="flex justify-between gap-3 py-2 hover:underline">
 						<span class="flex gap-3">
 							@chapterNum(ch.Index)
 							<span>{ ch.Title }</span>
 						</span>
-						<span class="text-sm text-stone-500 tabular-nums">{ clock(ch.DurationS) }</span>
+						<span class="flex shrink-0 items-center gap-3 text-sm text-stone-500 tabular-nums">
+							@noteCount(ch.Index, counts[ch.Index], false)
+							<span>{ clock(ch.DurationS) }</span>
+						</span>
 					</a>
 				</li>
 			}
@@ -123,7 +132,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		</div>
 		// Sibling of the top bar, not inside it: its backdrop-blur would make
 		// these fixed elements position relative to the bar.
-		@chapterDrawer(b, ch.Index)
+		@chapterDrawer(b, ch.Index, ns)
 		@notesDrawer(b, ch.Index, ns)
 		// pb-[40vh] lets the last lines scroll up past the fixed player bar.
 		<article
@@ -298,12 +307,68 @@ templ backupControls() {
 	<a href="/export" download class="rounded border border-stone-300 px-3 py-1 text-sm hover:bg-stone-200 dark:border-stone-600 dark:hover:bg-stone-700">
 		Export
 	</a>
-	<form method="post" action="/import" enctype="multipart/form-data" class="flex items-center gap-2">
-		<input type="file" name="file" accept="application/json,.json" required aria-label="Backup file" class="w-48 text-sm text-stone-500 file:mr-2 file:rounded file:border file:border-stone-300 file:bg-transparent file:px-3 file:py-1 file:text-sm hover:file:bg-stone-200 dark:file:border-stone-600 dark:hover:file:bg-stone-700"/>
+	@importForm("/import", "Backup file")
+}
+
+// importForm uploads one JSON export to action. Plain multipart form.
+templ importForm(action string, aria string) {
+	<form method="post" action={ templ.SafeURL(action) } enctype="multipart/form-data" class="flex items-center gap-2">
+		<input type="file" name="file" accept="application/json,.json" required aria-label={ aria } class="w-48 text-sm text-stone-500 file:mr-2 file:rounded file:border file:border-stone-300 file:bg-transparent file:px-3 file:py-1 file:text-sm hover:file:bg-stone-200 dark:file:border-stone-600 dark:hover:file:bg-stone-700"/>
 		<button type="submit" class="rounded border border-stone-300 px-3 py-1 text-sm hover:bg-stone-200 dark:border-stone-600 dark:hover:bg-stone-700">
 			Import
 		</button>
 	</form>
+}
+
+// shareNotes exports this book's notes (no progress) as a file to send to
+// someone, stamped with an optional sender name, and imports such a file.
+// Plain GET form and multipart form: no JS.
+templ shareNotes(id string) {
+	<div class="flex flex-wrap items-center gap-2">
+		<form method="get" action={ templ.SafeURL(notesExportURL(id)) } class="flex items-center gap-2">
+			<input
+				type="text"
+				name="name"
+				maxlength="60"
+				placeholder="Your name (optional)"
+				aria-label="Your name, shown on shared notes"
+				class="w-44 rounded border border-stone-300 bg-white px-2 py-1 text-sm dark:border-stone-600 dark:bg-stone-900"
+			/>
+			<button type="submit" class="rounded border border-stone-300 px-3 py-1 text-sm hover:bg-stone-200 dark:border-stone-600 dark:hover:bg-stone-700">
+				Export notes
+			</button>
+		</form>
+		@importForm(notesImportURL(id), "Notes file")
+	</div>
+}
+
+// noteCount shows a chapter's "✎ 3 🔖 1"; zero parts are left out. Note
+// changes send it again out of band (oob) so the counts stay current.
+templ noteCount(ch int, c chapterNotes, oob bool) {
+	<span
+		id={ noteCountID(ch) }
+		if oob {
+			hx-swap-oob="true"
+		}
+		class="flex gap-2 text-xs tabular-nums text-stone-500"
+	>
+		if c.Notes > 0 {
+			<span title="Notes">✎ { itoa(c.Notes) }</span>
+		}
+		if c.Marks > 0 {
+			<span title="Bookmarks">🔖 { itoa(c.Marks) }</span>
+		}
+	</span>
+}
+
+// NotesUpdate answers every note change: the fresh list for #notes, plus
+// every chapter's count out of band (zeros too, so deletes clear them).
+templ NotesUpdate(b bundle.Book, ns []notes.Note, inReader bool) {
+	@NotesList(b, ns, inReader)
+	{{ counts := countNotes(ns) }}
+	for _, ch := range b.Manifest.Chapters {
+		@noteCount(ch.Index, counts[ch.Index], true)
+	}
 }
 
 // NextLink is the reader's "Next →". On the last known chapter it is a
@@ -353,7 +418,7 @@ templ chapterNum(i int) {
 // inside #reader, so picking a chapter swaps it out (closed) with the rest.
 // Links carry no rel, so sync.js's a[rel=next] still finds only "Next →".
 // x-cloak hides both parts until Alpine starts; Alpine then drops the attribute.
-templ chapterDrawer(b bundle.Book, cur int) {
+templ chapterDrawer(b bundle.Book, cur int, ns []notes.Note) {
 	<div
 		x-cloak
 		x-show="chapters"
@@ -384,6 +449,7 @@ templ chapterDrawer(b bundle.Book, cur int) {
 			>✕</button>
 		</div>
 		<ol class="py-2">
+			{{ counts := countNotes(ns) }}
 			for _, c := range b.Manifest.Chapters {
 				<li>
 					<a
@@ -400,6 +466,7 @@ templ chapterDrawer(b bundle.Book, cur int) {
 					>
 						@chapterNum(c.Index)
 						<span class="flex-1">{ c.Title }</span>
+						@noteCount(c.Index, counts[c.Index], false)
 						<span class="tabular-nums text-stone-500">{ clock(c.DurationS) }</span>
 					</a>
 				</li>
@@ -485,19 +552,27 @@ templ NotesList(b bundle.Book, ns []notes.Note, inReader bool) {
 	<div
 		if inReader {
 			x-init="notesChanged()"
+		} else {
+			x-data="{ all: false }"
 		}
 	>
 		if len(ns) == 0 {
 			<p class="px-4 py-6 text-sm text-stone-500">No notes yet. Select text while reading to add one, or press 🔖.</p>
 		}
 		<ol class="divide-y divide-stone-200 dark:divide-stone-700">
-			for _, n := range ns {
+			for i, n := range ns {
+				// The book page shows the first notesPreview notes; the rest
+				// wait behind "Show all" so the chapters stay near the top.
 				<li
 					data-ch={ itoa(n.Chapter) }
 					data-start={ secs(n.Start) }
 					data-end={ secs(n.End) }
 					x-data="{ editing: false }"
-					class="px-4 py-3"
+					if !inReader && i >= notesPreview {
+						x-cloak
+						x-show="all"
+					}
+					class="px-4 py-3 [&[x-cloak]]:hidden"
 				>
 					<a
 						href={ noteURL(b.Manifest.ID, n) }
@@ -512,7 +587,12 @@ templ NotesList(b bundle.Book, ns []notes.Note, inReader bool) {
 					>
 						<div class="flex justify-between gap-2 text-xs tabular-nums text-stone-500">
 							<span>Ch { itoa(n.Chapter) } · { clock(n.Start) }</span>
-							<span>{ noteDate(n) }</span>
+							<span>
+								if n.Author != "" {
+									from { n.Author } ·
+								}
+								{ noteDate(n) }
+							</span>
 						</div>
 						<div class="truncate text-xs text-stone-500">{ chapterTitle(b, n.Chapter) }</div>
 						<blockquote class="mt-1 line-clamp-3 border-l-2 border-amber-500 pl-2 text-sm italic">{ n.Quote }</blockquote>
@@ -563,5 +643,16 @@ templ NotesList(b bundle.Book, ns []notes.Note, inReader bool) {
 				</li>
 			}
 		</ol>
+		if !inReader && len(ns) > notesPreview {
+			<button
+				type="button"
+				x-on:click="all = !all"
+				x-bind:aria-expanded="all"
+				class="w-full border-t border-stone-200 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-stone-100 dark:border-stone-700 dark:text-amber-400 dark:hover:bg-stone-800"
+			>
+				<span x-show="!all">Show all { itoa(len(ns)) } notes</span>
+				<span x-cloak x-show="all" class="[&[x-cloak]]:hidden">Show fewer</span>
+			</button>
+		}
 	</div>
 }

@@ -144,6 +144,18 @@ func TestMerge(t *testing.T) {
 	}
 }
 
+func TestMergeKeepsAuthor(t *testing.T) {
+	s := open(t)
+	in := []Note{{ID: "00000000000000bb", Chapter: 1, Quote: "q", Text: "hi", Author: "Kari"}}
+	if err := s.Merge("demo", in); err != nil {
+		t.Fatal(err)
+	}
+	ns, err := s.List("demo")
+	if err != nil || len(ns) != 1 || ns[0].Author != "Kari" {
+		t.Fatalf("after merge = %+v, %v", ns, err)
+	}
+}
+
 func TestBooks(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)

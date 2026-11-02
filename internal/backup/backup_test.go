@@ -87,7 +87,9 @@ func TestApplyKeepsNewerProgress(t *testing.T) {
 
 func TestDecodeRejects(t *testing.T) {
 	for name, doc := range map[string]string{
-		"version":  `{"version": 2, "books": {}}`,
+		"version":  `{"version": 3, "books": {}}`,
+		"zero":     `{"version": 0, "books": {}}`,
+		"author":   `{"version": 2, "books": {"demo": {"progress": null, "notes": [{"id": "00000000000000aa", "chapter": 1, "start": 0, "end": 0, "quote": "q", "text": "", "author": "a\nb", "created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z"}]}}}`,
 		"slug":     `{"version": 1, "books": {"../x": {"progress": null, "notes": []}}}`,
 		"unknown":  `{"version": 1, "books": {}, "extra": 1}`,
 		"trailing": `{"version": 1, "books": {}} {}`,
@@ -96,5 +98,60 @@ func TestDecodeRejects(t *testing.T) {
 		if _, err := Decode(strings.NewReader(doc)); err == nil {
 			t.Errorf("%s: Decode accepted %s", name, doc)
 		}
+	}
+}
+
+func TestDecodeAcceptsV1(t *testing.T) {
+	doc := `{"version": 1, "exported": "2026-01-01T00:00:00Z", "books": {"demo": {"progress": null, "notes": []}}}`
+	if _, err := Decode(strings.NewReader(doc)); err != nil {
+		t.Fatalf("v1 rejected: %v", err)
+	}
+}
+
+func TestValidAuthor(t *testing.T) {
+	for name, want := range map[string]bool{
+		"":                      true,
+		"Kari Nordmann":         true,
+		"Åse ✎":                 true,
+		"tab\there":             false,
+		strings.Repeat("x", 60): true,
+		strings.Repeat("x", 61): false,
+		strings.Repeat("æ", 60): true,
+		"bad\xffutf8":           false,
+	} {
+		if got := ValidAuthor(name); got != want {
+			t.Errorf("ValidAuthor(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestBuildBook(t *testing.T) {
+	ps, ns := stores(t)
+	if err := ps.Save("demo", progress.Position{Chapter: 2, Updated: t0}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ns.Add("demo", notes.Note{Chapter: 1, Quote: "mine", Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	fwd := notes.Note{ID: "00000000000000cc", Chapter: 1, Start: 5, End: 5, Quote: "fwd", Author: "Ola", Updated: t0}
+	if err := ns.Merge("demo", []notes.Note{fwd}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ns.Add("other", notes.Note{Chapter: 1, Quote: "other"}); err != nil {
+		t.Fatal(err)
+	}
+	e, err := BuildBook(ns, "demo", "Kari", t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := e.Books["demo"]
+	if len(e.Books) != 1 || !ok || d.Progress != nil || len(d.Notes) != 2 {
+		t.Fatalf("BuildBook = %+v", e)
+	}
+	if d.Notes[0].Author != "Kari" || d.Notes[1].Author != "Ola" {
+		t.Errorf("authors = %q, %q; want Kari, Ola", d.Notes[0].Author, d.Notes[1].Author)
+	}
+	if mine, err := ns.List("demo"); err != nil || mine[0].Author != "" {
+		t.Errorf("BuildBook changed stored notes: %+v, %v", mine, err)
 	}
 }

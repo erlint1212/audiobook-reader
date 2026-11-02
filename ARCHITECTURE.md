@@ -63,7 +63,13 @@ change answers with `NotesList`, swapped into `#notes`. In the reader
 (`?view=reader`) its links swap `#reader` at `?t=<start>` and its
 `x-init="notesChanged()"` makes sync.js redraw underlines (`data-note`) from
 the list's `data-ch/start/end`, so the rendered list is the only source of
-underline ranges. The book page shows the same list with plain links.
+underline ranges. The book page shows the same list with plain links,
+folded to the first 3 (`notesPreview`) behind an Alpine "Show all" so the
+chapters stay near the top. Chapter rows (book page and drawer) show
+`✎ notes 🔖 bookmarks` counts in `<span id="note-count-N">`; every note change
+answers with `NotesUpdate` = `NotesList` + every count as `hx-swap-oob`, so
+counts stay live with no JS. A note with an `author` came from someone else
+and shows "from {author}".
 
 ## Stack and why
 
@@ -94,9 +100,12 @@ underline ranges. The book page shows the same list with plain links.
   Changes are read-modify-write, so `Store` holds a mutex. Ids are 16 hex
   chars from `crypto/rand`; handlers check `ValidID` before use.
 - `internal/atomicfile`: temp file + rename, and `Stems` (list `*.json` ids), shared by both stores.
-- `internal/backup`: export format (`version` 1: `{version, exported, books: {id: {progress, notes}}}`).
-  `Build` gathers every book with data on disk, in the library or not. `Decode` is strict
-  (unknown fields, wrong version, non-slug id → error). `Apply` **merges, never deletes**:
+- `internal/backup`: export format (`version` 2: `{version, exported, books: {id: {progress, notes}}}`;
+  v2 added a note's optional `author`, v1 files still decode).
+  `Build` gathers every book with data on disk, in the library or not. `BuildBook` is the
+  share file: one book, no progress, the user's own notes (empty `author`) stamped with
+  the sender name; notes from others keep theirs. `Decode` is strict
+  (unknown fields, unknown version, non-slug id, bad author → error). `Apply` **merges, never deletes**:
   progress is replaced only by a later `updated`, notes merge by id (later `updated` wins),
   so importing an old backup cannot lose newer data. Imported quotes are trusted as-is.
 - `internal/web`: handlers + routes. `views/` holds templ components and
@@ -121,6 +130,8 @@ underline ranges. The book page shows the same list with plain links.
 | `DELETE /books/{id}/notes/{nid}[?view=reader]` | delete → `NotesList` (htmx 4 sends no form data with DELETE, hence the query) |
 | `GET /export` | all progress + notes as `reader-data-YYYY-MM-DD.json` download |
 | `POST /import` | multipart field `file` (max 16 MiB) → merge via `backup.Apply` → 303 `/` |
+| `GET /books/{id}/notes/export[?name=]` | this book's notes only, stamped with `name`, as `{id}-notes-YYYY-MM-DD.json` |
+| `POST /books/{id}/notes/import` | multipart `file` → merge only this book's notes (progress ignored; 400 if absent) → 303 `/books/{id}` |
 
 ## Rules for working in this repo
 
