@@ -123,7 +123,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 					<button
 						type="button"
 						aria-label="Notes"
-						x-on:click="notes = true"
+						x-on:click="openNotes()"
 						x-bind:aria-expanded="notes"
 						class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
 					>✎</button>

@@ -505,7 +505,7 @@ func Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64,
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<button type=\"button\" aria-label=\"Bookmark this spot\" title=\"Bookmark this spot\" x-on:click=\"bookmark()\" class=\"rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700\">🔖</button> <button type=\"button\" aria-label=\"Notes\" x-on:click=\"notes = true\" x-bind:aria-expanded=\"notes\" class=\"rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700\">✎</button>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<button type=\"button\" aria-label=\"Bookmark this spot\" title=\"Bookmark this spot\" x-on:click=\"bookmark()\" class=\"rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700\">🔖</button> <button type=\"button\" aria-label=\"Notes\" x-on:click=\"openNotes()\" x-bind:aria-expanded=\"notes\" class=\"rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700\">✎</button>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

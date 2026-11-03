@@ -74,6 +74,9 @@ the first/last selected word's `data-s` and opens the ✎ notes drawer, the
 chapter drawer's mirror on the right (`x-ref="notes"`, same rules: sibling of
 the top bar, inside `#reader`, ignored by `unfollow`). An empty note is a
 bookmark; 🔖 in the top bar bookmarks the current word with no selection.
+✎ opens the drawer through `openNotes`, which centres (scrollTop, like the
+chapter drawer) and focuses the note nearest the current chapter and time,
+read from the list's `data-ch`/`data-start`.
 **The client sends only times**; the server builds the quote from the
 alignment (`quoteFor`), so stored quotes are always book text. Every note
 change answers with `NotesList`, swapped into `#notes`. In the reader

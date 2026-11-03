@@ -89,6 +89,8 @@ document.addEventListener("alpine:init", () => {
     // This reader's chapter index, read from the root in init(). Methods run
     // from child expressions, where this.$el is the child, not the root.
     let chapter = "";
+    // Start time the reader opened at (?t=), until audio metadata loads.
+    let resume = 0;
 
     // Last index whose start <= t, or -1 before the first word.
     const indexAt = (t) => {
@@ -142,6 +144,7 @@ document.addEventListener("alpine:init", () => {
         chapter = this.$el.dataset.chapter;
         const audio = this.$refs.audio;
         const start = Number(this.$el.dataset.start) || 0;
+        resume = start;
         if (start > 0) {
           audio.addEventListener("loadedmetadata", () => { audio.currentTime = start; }, { once: true });
         }
@@ -187,6 +190,36 @@ document.addEventListener("alpine:init", () => {
           if (!cur) return;
           d.scrollTop = cur.offsetTop - d.clientHeight / 2 + cur.offsetHeight / 2;
           cur.focus({ preventScroll: true });
+        });
+      },
+
+      // Open the notes drawer centred on the note nearest the current spot.
+      // The list is in reading order: find the first note after (chapter,
+      // time), then pick it or the one before. Same scrollTop trick as
+      // openChapters, so the page text never moves.
+      openNotes() {
+        this.notes = true;
+        this.$nextTick(() => {
+          const d = this.$refs.notes;
+          const items = Array.from(d.querySelectorAll("#notes li[data-ch]"));
+          if (items.length === 0) return;
+          const ch = Number(chapter);
+          const t = this.$refs.audio.currentTime || resume;
+          const chOf = (li) => Number(li.dataset.ch);
+          let i = items.findIndex((li) => chOf(li) > ch || (chOf(li) === ch && Number(li.dataset.start) > t));
+          if (i < 0) i = items.length; // every note is before us
+          const prev = items[i - 1], next = items[i];
+          const here = (li) => li !== undefined && chOf(li) === ch;
+          let pick = prev || next;
+          if (here(prev) && here(next)) {
+            pick = t - Number(prev.dataset.start) <= Number(next.dataset.start) - t ? prev : next;
+          } else if (here(next)) {
+            pick = next;
+          } else if (here(prev)) {
+            pick = prev;
+          }
+          d.scrollTop = pick.offsetTop - d.clientHeight / 2 + pick.offsetHeight / 2;
+          pick.querySelector("a")?.focus({ preventScroll: true });
         });
       },
 

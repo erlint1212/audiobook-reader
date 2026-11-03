@@ -589,6 +589,41 @@ func TestNotesRendered(t *testing.T) {
 	}
 }
 
+// The ✎ button opens the drawer through openNotes, which scrolls to the
+// nearest note using the list's data-ch/data-start.
+func TestReaderNotesDrawerOpensAtNearest(t *testing.T) {
+	s, ns := newNotesServer(t)
+	for _, n := range []notes.Note{
+		{Chapter: 1, Start: 0.5, End: 0.5},
+		{Chapter: 2, Start: 0.5, End: 0.5},
+	} {
+		if _, err := ns.Add("demo", n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := do(s, httptest.NewRequest("GET", "/books/demo/ch/2", nil)).Body.String()
+	for _, want := range []string{
+		`x-on:click="openNotes()"`,
+		`data-ch="1"`,
+		`data-ch="2"`,
+		`data-start="0.500"`,
+	} {
+		if !strings.Contains(reader, want) {
+			t.Errorf("reader missing %q", want)
+		}
+	}
+	if strings.Contains(reader, `x-on:click="notes = true"`) {
+		t.Error("✎ button opens the drawer without openNotes")
+	}
+	js, err := os.ReadFile("static/sync.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "openNotes() {") {
+		t.Error("sync.js has no openNotes method")
+	}
+}
+
 func TestQuoteFor(t *testing.T) {
 	ws := func(start float64, ts ...string) []bundle.Word {
 		out := make([]bundle.Word, len(ts))
