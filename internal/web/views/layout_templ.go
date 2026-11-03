@@ -72,7 +72,7 @@ func Layout(title string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\"></script></head><body class=\"min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-900 dark:text-stone-100\"><header class=\"border-b border-stone-200 dark:border-stone-700\"><nav class=\"mx-auto max-w-3xl px-4 py-3\"><a href=\"/\" class=\"font-semibold hover:underline\">Library</a></nav></header><main class=\"mx-auto max-w-3xl px-4 py-6\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\"></script></head><body class=\"min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-900 dark:text-stone-100\"><header class=\"border-b border-stone-200 dark:border-stone-700\"><nav class=\"mx-auto max-w-3xl px-4 py-3\"><a href=\"/\" class=\"font-semibold hover:underline\">Library</a></nav></header><main class=\"mx-auto max-w-3xl px-4 py-6 [[data-width=wide]_&]:max-w-5xl\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

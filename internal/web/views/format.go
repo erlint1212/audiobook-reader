@@ -105,3 +105,29 @@ func noteCountID(ch int) string { return "note-count-" + itoa(ch) }
 
 // notesPreview is how many notes the book page shows before "Show all".
 const notesPreview = 3
+
+// prefGroup is one row of the reader's settings dropdown. Key and option
+// values must match PREFS in static/sync.js; sync.js ignores anything else.
+type prefGroup struct {
+	Key     string
+	Label   string
+	Options []prefOption
+}
+
+type prefOption struct {
+	Value string
+	Label string
+}
+
+var prefGroups = []prefGroup{
+	{"size", "Text size", []prefOption{{"sm", "S"}, {"md", "M"}, {"lg", "L"}, {"xl", "XL"}}},
+	{"font", "Font", []prefOption{{"sans", "Sans"}, {"serif", "Serif"}, {"mono", "Mono"}}},
+	{"leading", "Line spacing", []prefOption{{"tight", "Tight"}, {"normal", "Normal"}, {"loose", "Loose"}}},
+	{"width", "Text width", []prefOption{{"narrow", "Narrow"}, {"normal", "Normal"}, {"wide", "Wide"}}},
+	{"theme", "Theme", []prefOption{{"system", "System"}, {"light", "Light"}, {"dark", "Dark"}}},
+}
+
+// Keys and values are the constants above, never request input, so plain
+// concatenation into the Alpine expressions is safe.
+func prefCall(key, value string) string    { return "setPref('" + key + "', '" + value + "')" }
+func prefChecked(key, value string) string { return "prefs." + key + " === '" + value + "'" }

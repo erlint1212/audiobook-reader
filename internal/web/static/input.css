@@ -1,2 +1,4 @@
 @import "tailwindcss";
 @source "../views";
+/* dark: follows <html data-theme>, which sync.js sets from the OS or the reader's Theme setting. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));

@@ -93,7 +93,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		data-start={ secs(start) }
 		data-chapter={ itoa(ch.Index) }
 		x-on:keydown.window="key($event)"
-		x-on:keydown.escape.window="chapters = false; notes = false"
+		x-on:keydown.escape.window="chapters = false; notes = false; settings = false"
 		x-on:wheel.window="unfollow($event)"
 		x-on:touchmove.window="unfollow($event)"
 		x-on:selectionchange.document="selChanged()"
@@ -127,6 +127,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 						x-bind:aria-expanded="notes"
 						class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
 					>✎</button>
+					@readerSettings()
 				</div>
 			</div>
 		</div>
@@ -138,7 +139,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		<article
 			x-ref="text"
 			x-on:click="seek($event)"
-			class="mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600 [&_span[data-note]]:underline [&_span[data-note]]:decoration-amber-500 [&_span[data-note]]:decoration-dotted [&_span[data-note]]:decoration-2 [&_span[data-note]]:underline-offset-4"
+			class="mx-auto mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [[data-size=sm]_&]:text-base [[data-size=lg]_&]:text-xl [[data-size=xl]_&]:text-2xl [[data-font=serif]_&]:font-serif [[data-font=mono]_&]:font-mono [[data-leading=tight]_&]:leading-snug [[data-leading=loose]_&]:leading-loose [[data-width=narrow]_&]:max-w-xl[&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600 [&_span[data-note]]:underline [&_span[data-note]]:decoration-amber-500 [&_span[data-note]]:decoration-dotted [&_span[data-note]]:decoration-2 [&_span[data-note]]:underline-offset-4"
 		>
 			for bi, blk := range a.Blocks {
 				switch blk.Kind {
@@ -195,7 +196,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		// buttons drive the <audio> through sync.js.
 		<div x-ref="bar" class="fixed inset-x-0 bottom-0 z-10 border-t border-stone-200 bg-stone-50/95 backdrop-blur dark:border-stone-700 dark:bg-stone-900/95">
 			<audio x-ref="audio" src={ audioURL(b.Manifest.ID, ch.Index) } preload="metadata" class="hidden"></audio>
-			<div class="mx-auto max-w-3xl px-4 py-3">
+			<div class="mx-auto max-w-3xl px-4 py-3 [[data-width=wide]_&]:max-w-5xl">
 				<div class="flex items-center gap-3 text-sm tabular-nums text-stone-500">
 					<span x-text="clock(time)" class="w-12 text-right">0:00</span>
 					<input
@@ -210,9 +211,9 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 					/>
 					<span x-text="clock(duration)" class="w-12">0:00</span>
 				</div>
-				// Three columns keep play/pause centred, speed control on the right.
+				// Three columns keep play/pause centred: volume left, speed right.
 				<div class="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
-					<div></div>
+					@volumeControl()
 					<div class="flex items-center gap-6">
 						@skipButton(-10, "Back 10 seconds", "−10s")
 						<button
@@ -289,6 +290,75 @@ templ speedControl() {
 			x-text="speed.toFixed(1) + '×'"
 			class="w-12 rounded px-1 text-left hover:bg-stone-200 dark:hover:bg-stone-700"
 		>1.0×</button>
+	</div>
+}
+
+// volumeControl sets audio.volume, 0 to 1. The button mutes and unmutes;
+// moving the slider unmutes too.
+templ volumeControl() {
+	<div class="flex items-center gap-2 text-sm text-stone-500">
+		<button
+			type="button"
+			aria-label="Mute"
+			x-on:click="toggleMute()"
+			x-bind:aria-pressed="muted"
+			x-text="muted || volume === 0 ? '🔇' : '🔊'"
+			class="rounded px-1 hover:bg-stone-200 dark:hover:bg-stone-700"
+		>🔊</button>
+		<input
+			type="range"
+			min="0"
+			max="1"
+			step="0.05"
+			aria-label="Volume"
+			x-bind:value="muted ? 0 : volume"
+			x-on:input="setVolume($event.target.value)"
+			class="h-1 w-20 cursor-pointer accent-amber-500 sm:w-28"
+		/>
+	</div>
+}
+
+// readerSettings is the "Aa" dropdown in the reader's top bar. Absolute, not
+// fixed, so the bar's backdrop-blur does not matter. Each row is a radio
+// group; sync.js setPref stores the choice and sets it on <html>.
+templ readerSettings() {
+	<div class="relative" x-on:click.outside="settings = false">
+		<button
+			type="button"
+			aria-label="Reading settings"
+			x-on:click="settings = !settings"
+			x-bind:aria-expanded="settings"
+			class="rounded px-2 py-1 font-serif hover:bg-stone-200 dark:hover:bg-stone-700"
+		>Aa</button>
+		<div
+			x-ref="settings"
+			x-cloak
+			x-show="settings"
+			x-transition.opacity
+			class="absolute right-0 top-full z-20 mt-2 w-72 space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-3 shadow-lg dark:border-stone-700 dark:bg-stone-800 [&[x-cloak]]:hidden"
+		>
+			for _, g := range prefGroups {
+				@prefRow(g)
+			}
+		</div>
+	</div>
+}
+
+// prefRow is one segmented radio group in readerSettings.
+templ prefRow(g prefGroup) {
+	<div role="radiogroup" aria-label={ g.Label }>
+		<div class="mb-1 text-xs font-semibold text-stone-500">{ g.Label }</div>
+		<div class="flex overflow-hidden rounded border border-stone-300 dark:border-stone-600">
+			for _, o := range g.Options {
+				<button
+					type="button"
+					role="radio"
+					x-on:click={ prefCall(g.Key, o.Value) }
+					x-bind:aria-checked={ prefChecked(g.Key, o.Value) }
+					class="flex-1 px-2 py-1 text-sm hover:bg-stone-200 aria-checked:bg-amber-500 aria-checked:font-semibold aria-checked:text-stone-900 dark:hover:bg-stone-700"
+				>{ o.Label }</button>
+			}
+		</div>
 	</div>
 }
 

@@ -27,7 +27,24 @@ The player is a custom bar fixed to the bottom (`x-ref="bar"`): seek slider,
 to 1×). The `<audio>` is hidden (no native `controls`). Speed is kept in
 `localStorage` (`reader.speed`) because it is a per-browser preference, not
 book progress. It carries across chapters, and if storage is blocked it falls
-back to 1×.
+back to 1×. The left column holds a volume slider (0–1, `reader.volume`, same
+rules) and a mute button; mute is not stored, and moving the slider unmutes.
+↑/↓ change volume by 0.1. iOS Safari ignores `audio.volume`, so there the
+slider does nothing.
+
+Reading settings: the "Aa" button in the top bar opens an `absolute` dropdown
+(`x-ref="settings"`, ignored by `unfollow`, closed by Escape or click outside)
+with text size, font (system sans/serif/mono, no web fonts), line spacing,
+text width and theme (system/light/dark). They are stored as one JSON object
+in `localStorage` (`reader.prefs`) and live as data attributes on `<html>`
+(`data-size`, `data-font`, `data-leading`, `data-width`, `data-theme`).
+sync.js sets them at the top level, before Alpine and before first paint, so
+there is no flash. Templates react with Tailwind ancestor variants such as
+`[[data-size=lg]_&]:text-xl`; no CSS rules. `PREFS` in sync.js is the allow-list
+(first value = default) and must match `prefGroups` in `views/format.go`
+(`TestPrefValuesMatchSyncJS` checks). Theme: `input.css` overrides the `dark`
+variant to `[data-theme=dark]`; sync.js resolves "system" through
+`matchMedia` and follows OS changes, so `dark:` works on every page.
 Auto-scroll keeps the word inside the band between the sticky top bar
 (`x-ref="top"`) and the player bar; the article has `pb-[40vh]` so the last lines
 can rise above the bar. When a chapter ends, sync.js clicks `a[rel=next]` (the

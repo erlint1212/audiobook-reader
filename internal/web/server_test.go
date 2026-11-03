@@ -158,6 +158,66 @@ func TestReaderPlayerAndNextLink(t *testing.T) {
 	}
 }
 
+// The player has a volume slider, and the top bar an "Aa" dropdown whose
+// buttons call setPref. The article reads each pref from <html> data
+// attributes through Tailwind variants.
+func TestReaderSettingsAndVolume(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	for _, want := range []string{
+		`aria-label="Volume"`,
+		`x-on:input="setVolume($event.target.value)"`,
+		`x-on:click="toggleMute()"`,
+		`aria-label="Reading settings"`,
+		`x-ref="settings"`,
+		`setPref(&#39;size&#39;, &#39;xl&#39;)`,
+		`setPref(&#39;font&#39;, &#39;serif&#39;)`,
+		`setPref(&#39;leading&#39;, &#39;loose&#39;)`,
+		`setPref(&#39;width&#39;, &#39;narrow&#39;)`,
+		`setPref(&#39;theme&#39;, &#39;dark&#39;)`,
+		`[[data-size=lg]_&]:text-xl`,
+		`[[data-font=serif]_&]:font-serif`,
+		`[[data-leading=loose]_&]:leading-loose`,
+		`[[data-width=narrow]_&]:max-w-xl`,
+		`[[data-width=wide]_&]:max-w-5xl`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("reader missing %q", want)
+		}
+	}
+}
+
+// Every value the dropdown offers must be allowed by PREFS in sync.js, or
+// setPref would silently ignore the click.
+func TestPrefValuesMatchSyncJS(t *testing.T) {
+	js, err := os.ReadFile("static/sync.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(js)
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	for _, key := range []string{"size", "font", "leading", "width", "theme"} {
+		start := strings.Index(src, "  "+key+": [")
+		if start < 0 {
+			t.Fatalf("PREFS has no %q", key)
+		}
+		line := src[start : start+strings.Index(src[start:], "\n")]
+		rest := body
+		for {
+			i := strings.Index(rest, "setPref(&#39;"+key+"&#39;, &#39;")
+			if i < 0 {
+				break
+			}
+			rest = rest[i+len("setPref(&#39;"+key+"&#39;, &#39;"):]
+			value := rest[:strings.Index(rest, "&#39;")]
+			if !strings.Contains(line, `"`+value+`"`) {
+				t.Errorf("dropdown offers %s=%q, PREFS line is %s", key, value, line)
+			}
+		}
+	}
+}
+
 func TestImageServesFile(t *testing.T) {
 	s, _ := newTestServer(t)
 	w := do(s, httptest.NewRequest("GET", "/books/figures/ch/1/img/3", nil))

@@ -2,6 +2,50 @@
 // The server renders each word as <span data-s="start">. This component
 // follows audio.currentTime, marks the current word with data-active
 // (styled by Tailwind in the template), keeps it in view, and saves progress.
+
+// Reading prefs (reader.prefs) live as data attributes on <html>, so Tailwind
+// variants like [[data-size=lg]_&]:text-xl style the page. This file loads in
+// <head>, so they are set before first paint: no flash. Each key lists its
+// allowed values; the first is the default.
+const PREFS = {
+  size: ["md", "sm", "lg", "xl"],
+  font: ["sans", "serif", "mono"],
+  leading: ["normal", "tight", "loose"],
+  width: ["normal", "narrow", "wide"],
+  theme: ["system", "light", "dark"],
+};
+const PREFS_KEY = "reader.prefs";
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+// Unknown or missing values fall back to the default, so a bad stored value
+// can never leave the page unstyled.
+const cleanPrefs = (p) => {
+  const out = {};
+  for (const [k, allowed] of Object.entries(PREFS)) {
+    out[k] = allowed.includes(p?.[k]) ? p[k] : allowed[0];
+  }
+  return out;
+};
+const loadPrefs = () => {
+  try { return cleanPrefs(JSON.parse(localStorage.getItem(PREFS_KEY))); } catch { return cleanPrefs(null); }
+};
+const storePrefs = (p) => {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+};
+// "system" theme resolves to light or dark here; the dark: variant only
+// looks at data-theme.
+const applyPrefs = (p) => {
+  const root = document.documentElement.dataset;
+  root.size = p.size;
+  root.font = p.font;
+  root.leading = p.leading;
+  root.width = p.width;
+  root.theme = p.theme === "system" ? (darkQuery.matches ? "dark" : "light") : p.theme;
+};
+applyPrefs(loadPrefs());
+// OS theme changed: follow it, unless a fixed theme was picked.
+darkQuery.addEventListener("change", () => applyPrefs(loadPrefs()));
+
 document.addEventListener("alpine:init", () => {
   // Set when a chapter ends. The next reader (swapped in by htmx) sees it in
   // init() and starts playing. Shared across instances, so it lives out here.
@@ -16,6 +60,20 @@ document.addEventListener("alpine:init", () => {
   };
   const storeSpeed = (r) => {
     try { localStorage.setItem(SPEED_KEY, String(r)); } catch { /* ignore */ }
+  };
+
+  // Volume works the same way. Mute is not stored: a reload is never silent.
+  // iOS Safari ignores audio.volume (hardware buttons only).
+  const VOLUME_KEY = "reader.volume";
+  const clampVolume = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 1;
+  };
+  const loadVolume = () => {
+    try { return clampVolume(localStorage.getItem(VOLUME_KEY) ?? 1); } catch { return 1; }
+  };
+  const storeVolume = (v) => {
+    try { localStorage.setItem(VOLUME_KEY, String(v)); } catch { /* ignore */ }
   };
 
   Alpine.data("reader", () => {
@@ -67,6 +125,10 @@ document.addEventListener("alpine:init", () => {
       duration: 0,
       playing: false,
       speed: 1,
+      volume: 1,
+      muted: false,
+      settings: false, // reading settings dropdown open
+      prefs: loadPrefs(),
       chapters: false,
       notes: false, // notes drawer open
       sel: false, // text selected inside the article: show "＋ Note"
@@ -84,6 +146,7 @@ document.addEventListener("alpine:init", () => {
           audio.addEventListener("loadedmetadata", () => { audio.currentTime = start; }, { once: true });
         }
         this.setSpeed(loadSpeed());
+        this.setVolume(loadVolume());
         audio.addEventListener("durationchange", () => { this.duration = audio.duration; });
         audio.addEventListener("play", () => { waiting = false; this.playing = true; this.loop(); });
         audio.addEventListener("pause", () => { this.playing = false; this.tick(); this.save(); });
@@ -134,7 +197,9 @@ document.addEventListener("alpine:init", () => {
 
       // Page scrolled by hand: stop following. Scrolling a drawer does not count.
       unfollow(e) {
-        if (this.$refs.drawer.contains(e.target) || this.$refs.notes.contains(e.target)) return;
+        for (const r of [this.$refs.drawer, this.$refs.notes, this.$refs.settings]) {
+          if (r.contains(e.target)) return;
+        }
         this.follow = false;
       },
 
@@ -219,6 +284,30 @@ document.addEventListener("alpine:init", () => {
         storeSpeed(this.speed);
       },
 
+      // Slider input or arrow keys. Moving the slider also unmutes.
+      setVolume(v) {
+        this.volume = clampVolume(v);
+        const audio = this.$refs.audio;
+        audio.volume = this.volume;
+        if (this.muted && this.volume > 0) this.toggleMute();
+        storeVolume(this.volume);
+      },
+
+      toggleMute() {
+        this.muted = !this.muted;
+        this.$refs.audio.muted = this.muted;
+      },
+
+      // Settings dropdown button. Values outside PREFS are ignored. Size and
+      // width move the text, so re-centre the spoken word if following.
+      setPref(k, v) {
+        if (!PREFS[k]?.includes(v)) return;
+        this.prefs = { ...this.prefs, [k]: v };
+        applyPrefs(this.prefs);
+        storePrefs(this.prefs);
+        if (this.follow) this.$nextTick(() => this.resumeFollow());
+      },
+
       // m:ss, or h:mm:ss for long chapters.
       clock(t) {
         if (!Number.isFinite(t)) return "0:00";
@@ -274,6 +363,9 @@ document.addEventListener("alpine:init", () => {
         } else if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
           e.preventDefault();
           this.skip(e.code === "ArrowLeft" ? -10 : 10);
+        } else if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+          e.preventDefault();
+          this.setVolume(this.volume + (e.code === "ArrowUp" ? 0.1 : -0.1));
         } else if (e.code === "PageUp" || e.code === "PageDown") {
           this.follow = false;
         }
