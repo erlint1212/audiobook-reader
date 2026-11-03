@@ -27,10 +27,14 @@ The player is a custom bar fixed to the bottom (`x-ref="bar"`): seek slider,
 to 1×). The `<audio>` is hidden (no native `controls`). Speed is kept in
 `localStorage` (`reader.speed`) because it is a per-browser preference, not
 book progress. It carries across chapters, and if storage is blocked it falls
-back to 1×. The left column holds a volume slider (0–1, `reader.volume`, same
-rules) and a mute button; mute is not stored, and moving the slider unmutes.
-↑/↓ change volume by 0.1. iOS Safari ignores `audio.volume`, so there the
-slider does nothing.
+back to 1×. The left column holds a mute button, a volume slider (0–200%,
+`reader.volume`, same rules), and a label that resets to 100%; mute is not
+stored, and moving the slider unmutes. ↑/↓ change volume by 10%. Up to 100%
+it is `audio.volume`. Above that `sync.js` routes the `<audio>` through a Web
+Audio `GainNode`, so the user can turn system volume down for other apps and
+still hear the book. The graph is built on first need and kept, because
+`createMediaElementSource` cannot be undone. Rules: the audio must stay
+same-origin (served by Go) or Web Audio plays silence; high gain can clip.
 
 Reading settings: the "Aa" button in the top bar opens an `absolute` dropdown
 (`x-ref="settings"`, ignored by `unfollow`, closed by Escape or click outside)

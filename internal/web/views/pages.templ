@@ -293,8 +293,9 @@ templ speedControl() {
 	</div>
 }
 
-// volumeControl sets audio.volume, 0 to 1. The button mutes and unmutes;
-// moving the slider unmutes too.
+// volumeControl sets the volume, 0 to 200%. Above 100% sync.js boosts with a
+// Web Audio gain. The speaker button mutes and unmutes; moving the slider
+// unmutes too. The label shows the level; clicking it resets to 100%.
 templ volumeControl() {
 	<div class="flex items-center gap-2 text-sm text-stone-500">
 		<button
@@ -308,13 +309,21 @@ templ volumeControl() {
 		<input
 			type="range"
 			min="0"
-			max="1"
+			max="2"
 			step="0.05"
 			aria-label="Volume"
 			x-bind:value="muted ? 0 : volume"
 			x-on:input="setVolume($event.target.value)"
 			class="h-1 w-20 cursor-pointer accent-amber-500 sm:w-28"
 		/>
+		<button
+			type="button"
+			aria-label="Reset volume to 100%"
+			x-on:click="setVolume(1)"
+			x-text="Math.round(volume * 100) + '%'"
+			x-bind:class="volume > 1 && 'text-amber-600 dark:text-amber-400'"
+			class="w-12 rounded px-1 text-left tabular-nums hover:bg-stone-200 dark:hover:bg-stone-700"
+		>100%</button>
 	</div>
 }
 

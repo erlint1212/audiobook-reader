@@ -63,11 +63,13 @@ document.addEventListener("alpine:init", () => {
   };
 
   // Volume works the same way. Mute is not stored: a reload is never silent.
-  // iOS Safari ignores audio.volume (hardware buttons only).
+  // 0 to MAX_VOLUME; above 1 a Web Audio gain boosts the book past what
+  // audio.volume allows. Rounded so arrow-key steps do not drift.
   const VOLUME_KEY = "reader.volume";
+  const MAX_VOLUME = 2;
   const clampVolume = (v) => {
     const n = Number(v);
-    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 1;
+    return Number.isFinite(n) ? Math.round(Math.min(MAX_VOLUME, Math.max(0, n)) * 100) / 100 : 1;
   };
   const loadVolume = () => {
     try { return clampVolume(localStorage.getItem(VOLUME_KEY) ?? 1); } catch { return 1; }
@@ -91,6 +93,33 @@ document.addEventListener("alpine:init", () => {
     let chapter = "";
     // Start time the reader opened at (?t=), until audio metadata loads.
     let resume = 0;
+    // Web Audio GainNode for volume above 100%, built on first need.
+    let gain = null;
+
+    const wake = () => {
+      if (gain?.context.state === "suspended") gain.context.resume().catch(() => { /* next play retries */ });
+    };
+
+    // audio.volume stops at 1, so the rest goes to a GainNode. The graph is
+    // kept once built: createMediaElementSource cannot be undone. If the
+    // context starts suspended (no user gesture yet), "play" resumes it.
+    // iOS Safari ignores audio.volume, but the gain still works there.
+    const applyVolume = (audio, v) => {
+      audio.volume = Math.min(1, v);
+      if (!gain && v > 1) {
+        const Ctx = window.AudioContext ?? window.webkitAudioContext;
+        if (!Ctx) return;
+        try {
+          const ctx = new Ctx();
+          const node = ctx.createGain();
+          ctx.createMediaElementSource(audio).connect(node).connect(ctx.destination);
+          gain = node;
+        } catch { return; } // no boost; plain audio.volume still works
+      }
+      if (!gain) return;
+      gain.gain.value = Math.max(1, v);
+      wake();
+    };
 
     // Last index whose start <= t, or -1 before the first word.
     const indexAt = (t) => {
@@ -151,7 +180,7 @@ document.addEventListener("alpine:init", () => {
         this.setSpeed(loadSpeed());
         this.setVolume(loadVolume());
         audio.addEventListener("durationchange", () => { this.duration = audio.duration; });
-        audio.addEventListener("play", () => { waiting = false; this.playing = true; this.loop(); });
+        audio.addEventListener("play", () => { wake(); waiting = false; this.playing = true; this.loop(); });
         audio.addEventListener("pause", () => { this.playing = false; this.tick(); this.save(); });
         audio.addEventListener("seeked", () => this.tick());
         audio.addEventListener("ended", () => this.next());
@@ -317,11 +346,11 @@ document.addEventListener("alpine:init", () => {
         storeSpeed(this.speed);
       },
 
-      // Slider input or arrow keys. Moving the slider also unmutes.
+      // Slider input, arrow keys, or 1 from the reset label. Moving the
+      // slider also unmutes.
       setVolume(v) {
         this.volume = clampVolume(v);
-        const audio = this.$refs.audio;
-        audio.volume = this.volume;
+        applyVolume(this.$refs.audio, this.volume);
         if (this.muted && this.volume > 0) this.toggleMute();
         storeVolume(this.volume);
       },

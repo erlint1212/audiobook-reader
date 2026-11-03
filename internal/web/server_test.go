@@ -168,6 +168,8 @@ func TestReaderSettingsAndVolume(t *testing.T) {
 		`aria-label="Volume"`,
 		`x-on:input="setVolume($event.target.value)"`,
 		`x-on:click="toggleMute()"`,
+		`max="2"`, // volume boosts past 100%; must match MAX_VOLUME in sync.js
+		`x-on:click="setVolume(1)"`,
 		`aria-label="Reading settings"`,
 		`x-ref="settings"`,
 		`setPref(&#39;size&#39;, &#39;xl&#39;)`,
