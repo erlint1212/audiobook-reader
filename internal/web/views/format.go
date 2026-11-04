@@ -3,7 +3,6 @@ package views
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/a-h/templ"
 
@@ -132,34 +131,3 @@ var prefGroups = []prefGroup{
 // concatenation into the Alpine expressions is safe.
 func prefCall(key, value string) string    { return "setPref('" + key + "', '" + value + "')" }
 func prefChecked(key, value string) string { return "prefs." + key + " === '" + value + "'" }
-
-// run is a stretch of a paragraph: plain words, or (Entry set) one
-// occurrence of a glossary term, rendered with a hover box.
-type run struct {
-	Words []bundle.Word
-	Entry *bundle.Entry
-}
-
-// runs splits block bi's words at the marks that fall in it. marks come from
-// Book.LoadMarks, so they are sorted, in range and point into glossary.
-func runs(ws []bundle.Word, bi int, marks []bundle.Mark, glossary []bundle.Entry) []run {
-	var out []run
-	pos := 0
-	for _, m := range marks {
-		if m.B != bi {
-			continue
-		}
-		if m.W > pos {
-			out = append(out, run{Words: ws[pos:m.W]})
-		}
-		out = append(out, run{Words: ws[m.W : m.W+m.N], Entry: &glossary[m.G]})
-		pos = m.W + m.N
-	}
-	if pos < len(ws) {
-		out = append(out, run{Words: ws[pos:]})
-	}
-	return out
-}
-
-// seeAlso joins sub-entries for the hover box.
-func seeAlso(see []string) string { return strings.Join(see, " · ") }

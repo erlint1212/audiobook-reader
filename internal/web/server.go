@@ -147,20 +147,14 @@ func (s *Server) handleChapter(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	// Glossary marks are extras: broken ones are logged, the text still shows.
-	marks, err := b.LoadMarks(ch, a)
-	if err != nil {
-		s.log.Warn("glossary marks", "book", b.Manifest.ID, "chapter", ch.Index, "err", err)
-		marks = nil
-	}
 	start := s.startTime(r, b, ch)
 	ns := s.bookNotes(b)
 	// htmx chapter switches only need the reader section.
 	if r.Header.Get("HX-Request") == "true" {
-		s.render(w, r, views.Reader(b, ch, a, marks, start, ns))
+		s.render(w, r, views.Reader(b, ch, a, start, ns))
 		return
 	}
-	s.render(w, r, views.ReaderPage(b, ch, a, marks, start, ns))
+	s.render(w, r, views.ReaderPage(b, ch, a, start, ns))
 }
 
 // bookNotes lists the book's notes. A broken notes file must not block
