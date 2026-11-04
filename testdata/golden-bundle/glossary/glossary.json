@@ -1,0 +1,17 @@
+{
+  "schema_version": 3,
+  "entries": [
+    {
+      "id": 0,
+      "term": "error budgets",
+      "text": "An error budget is the allowed unreliability.",
+      "source": "Error Budgets",
+      "see": ["burn rate", "policy"]
+    },
+    {
+      "id": 1,
+      "term": "SLO (service level objective)",
+      "text": "A target for how reliable a service should be."
+    }
+  ]
+}

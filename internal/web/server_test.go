@@ -813,3 +813,74 @@ func TestShareNotes(t *testing.T) {
 		t.Errorf("notes import must not touch progress: ok %v err %v", ok, err)
 	}
 }
+
+// A v3 book's index terms get an underlined wrapper with a hover box; the
+// words inside stay ordinary clickable spans.
+func TestReaderRendersGlossaryTerms(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/glossary/ch/1", nil)).Body.String()
+	if n := strings.Count(body, "<span data-s="); n != 17 {
+		t.Errorf("rendered %d word spans, want 17 (every word once)", n)
+	}
+	if n := strings.Count(body, `role="tooltip"`); n != 4 {
+		t.Errorf("rendered %d hover boxes, want 4", n)
+	}
+	for _, want := range []string{
+		"An error budget is the allowed unreliability.",
+		"— Error Budgets",
+		"See also: burn rate · policy",
+		"SLO (service level objective)",
+		"absolute inset-x-0 z-[5]",
+		"group-hover/term:visible",
+		`<p class="relative">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+	// The term's words keep their timing spans, inside the wrapper, before its box.
+	at := strings.Index(body, `data-s="0.900">error</span>`)
+	box := strings.Index(body, `role="tooltip"`)
+	if at < 0 || box < at {
+		t.Errorf("term words not before their box (%d, %d)", at, box)
+	}
+	// Only word spans get word styling, so wrappers and boxes are not padded.
+	if strings.Contains(body, "[&_span]:px-0.5") || !strings.Contains(body, "[&_span[data-s]]:px-0.5") {
+		t.Error("word styles must target span[data-s] only")
+	}
+}
+
+func TestReaderWithoutGlossaryHasNoBoxes(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/figures/ch/1", nil)).Body.String()
+	if strings.Contains(body, `role="tooltip"`) {
+		t.Error("v2 book rendered a hover box")
+	}
+}
+
+// Broken marks are logged; the chapter still renders, without boxes.
+func TestReaderBrokenMarksStillRenders(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "glossary")
+	if err := os.CopyFS(dir, os.DirFS("../../testdata/golden-bundle/glossary")); err != nil {
+		t.Fatal(err)
+	}
+	broken := `{"schema_version": 3, "chapter_index": 1, "marks": [{"b": 0, "w": 0, "n": 1, "g": 0}]}`
+	if err := os.WriteFile(filepath.Join(dir, "chapters", "001.marks.json"), []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lib, err := library.Open(root, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := progress.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(lib, store, newNotes(t), log)
+	w := do(s, httptest.NewRequest("GET", "/books/glossary/ch/1", nil))
+	if w.Code != 200 || strings.Contains(w.Body.String(), `role="tooltip"`) {
+		t.Fatalf("status %d, boxes %v", w.Code, strings.Contains(w.Body.String(), `role="tooltip"`))
+	}
+}

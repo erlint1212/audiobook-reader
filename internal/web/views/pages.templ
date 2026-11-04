@@ -78,15 +78,15 @@ templ BookPage(b bundle.Book, pos progress.Position, hasPos bool, ns []notes.Not
 	}
 }
 
-templ ReaderPage(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64, ns []notes.Note) {
+templ ReaderPage(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, marks []bundle.Mark, start float64, ns []notes.Note) {
 	@Layout(ch.Title + " · " + b.Manifest.Title) {
-		@Reader(b, ch, a, start, ns)
+		@Reader(b, ch, a, marks, start, ns)
 	}
 }
 
 // Reader is also returned alone as an htmx fragment when switching chapters.
 // All per-word styling lives here; sync.js only toggles data-active.
-templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64, ns []notes.Note) {
+templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, marks []bundle.Mark, start float64, ns []notes.Note) {
 	<section
 		id="reader"
 		x-data="reader"
@@ -139,7 +139,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		<article
 			x-ref="text"
 			x-on:click="seek($event)"
-			class="mx-auto mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [[data-size=sm]_&]:text-base [[data-size=lg]_&]:text-xl [[data-size=xl]_&]:text-2xl [[data-font=serif]_&]:font-serif [[data-font=mono]_&]:font-mono [[data-leading=tight]_&]:leading-snug [[data-leading=loose]_&]:leading-loose [[data-width=narrow]_&]:max-w-xl[&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600 [&_span[data-note]]:underline [&_span[data-note]]:decoration-amber-500 [&_span[data-note]]:decoration-dotted [&_span[data-note]]:decoration-2 [&_span[data-note]]:underline-offset-4"
+			class="mx-auto mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [[data-size=sm]_&]:text-base [[data-size=lg]_&]:text-xl [[data-size=xl]_&]:text-2xl [[data-font=serif]_&]:font-serif [[data-font=mono]_&]:font-mono [[data-leading=tight]_&]:leading-snug [[data-leading=loose]_&]:leading-loose [[data-width=narrow]_&]:max-w-xl [&_span[data-s]]:cursor-pointer [&_span[data-s]]:rounded [&_span[data-s]]:px-0.5 [&_span[data-s]:hover]:bg-stone-200 dark:[&_span[data-s]:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600 [&_span[data-note]]:underline [&_span[data-note]]:decoration-amber-500 [&_span[data-note]]:decoration-dotted [&_span[data-note]]:decoration-2 [&_span[data-note]]:underline-offset-4"
 		>
 			for bi, blk := range a.Blocks {
 				switch blk.Kind {
@@ -158,8 +158,15 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 							}
 						</figure>
 					default:
-						<p>
-							@words(blk.Words)
+						// relative: glossary hover boxes span the paragraph's width.
+						<p class="relative">
+							for _, r := range runs(blk.Words, bi, marks, b.Glossary) {
+								if r.Entry != nil {
+									@term(r)
+								} else {
+									@words(r.Words)
+								}
+							}
 						</p>
 				}
 			}
@@ -257,6 +264,33 @@ templ words(ws []bundle.Word) {
 	for _, w := range ws {
 		<span data-s={ secs(w.S) }>{ w.T }</span>{ " " }
 	}
+}
+
+// term is one occurrence of a glossary term (from the book's index): its
+// words underlined, and a hover/focus box with the explanation. The box is
+// absolute (out of flow, so no text moves), z-[5] (over the text, under the
+// bars at z-10), as wide as the paragraph (the wrapper is not positioned, so
+// it keeps its line, one line down, and takes the <p>'s width) and
+// pointer-events-none (clicks reach the words below). Pure CSS, no JS.
+templ term(r run) {
+	<span tabindex="0" class="group/term cursor-help underline decoration-sky-500 decoration-dashed decoration-1 underline-offset-4 focus:outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-sky-400">
+		for i, w := range r.Words {
+			if i > 0 {
+				{ " " }
+			}
+			<span data-s={ secs(w.S) }>{ w.T }</span>
+		}
+		<span role="tooltip" class="pointer-events-none invisible absolute inset-x-0 z-[5] mt-[1lh] block select-none rounded-lg bg-white p-3 text-left text-sm font-normal not-italic leading-snug text-stone-800 no-underline opacity-0 shadow-lg ring-1 ring-stone-300 transition-opacity group-hover/term:visible group-hover/term:opacity-100 group-focus/term:visible group-focus/term:opacity-100 dark:bg-stone-800 dark:text-stone-100 dark:ring-stone-600">
+			<span class="block font-semibold">{ r.Entry.Term }</span>
+			<span class="mt-1 block">{ r.Entry.Text }</span>
+			if r.Entry.Source != "" {
+				<span class="mt-1 block text-xs text-stone-500 dark:text-stone-400">— { r.Entry.Source }</span>
+			}
+			if len(r.Entry.See) > 0 {
+				<span class="mt-1 block text-xs text-stone-500 dark:text-stone-400">See also: { seeAlso(r.Entry.See) }</span>
+			}
+		</span>
+	</span>{ " " }
 }
 
 // skipButton jumps the audio by secs (negative = back).

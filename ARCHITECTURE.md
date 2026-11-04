@@ -10,12 +10,29 @@ the bundles this repo reads. The two repos share **nothing but the bundle format
 EPUB ──forge──▶ bundle dir (manifest.json, NNN.opus, NNN.align.json, images/) ──reader──▶ browser
 ```
 
-Bundles are schema v1 or v2. v2 adds picture blocks: `{"kind": "fig",
+Bundles are schema v1, v2 or v3. v2 adds picture blocks: `{"kind": "fig",
 "image": "images/001.png", "words": [...]}`, where words are the caption
 (else alt text) and may be empty. The reader renders a `<figure>` with the
 image and the words as a `<figcaption>`. While a caption word is active the
 figure gets a ring through Tailwind `has-[span[data-active]]:` (CSS `:has()`),
 so sync.js needs no picture logic beyond keeping the whole figure in view.
+
+v3 adds a **glossary** made by forge from the book's index chapter (which is
+not narrated): manifest `glossary` → `glossary.json` (entries `{id, term, text,
+source?, see?}`, loaded once into `Book.Glossary`) and chapter `marks` →
+`chapters/NNN.marks.json` (`{b, w, n, g}`: words w..w+n-1 of paragraph b are
+entry g; read per request by `Book.LoadMarks`). `views.runs` splits a paragraph
+at its marks; `term` renders a marked run as a `group/term` wrapper (dashed sky
+underline, `tabindex=0` so a tap/Tab shows it too) around the normal word
+spans, plus a `role="tooltip"` box. The box rules: `absolute` (out of flow, so
+**no text moves**), `z-[5]` (above the text, below the bars' `z-10` and drawers),
+`pointer-events-none` and `select-none` (clicks/selection reach the words), shown
+by `group-hover/term:` / `group-focus/term:` only, no JS. The wrapper is *not*
+positioned and the `<p>` is `relative`, so the box keeps the term's line
+(`mt-[1lh]` = one line down) but spans the paragraph's width and never runs off
+the screen. Word styling in `Reader` targets `span[data-s]` only, so wrappers
+and boxes get no word padding/hover. Broken marks are logged and the chapter
+renders without boxes.
 
 The reader scans `-library` at startup and again on refresh (Refresh buttons
 on the library and book pages, and the reader's last-chapter poll). Each request renders HTML on the
@@ -111,10 +128,12 @@ and shows "from {author}".
 ## Packages
 
 - `cmd/reader`: flags, wiring, graceful shutdown.
-- `internal/bundle`: Go types for bundle v1/v2, strict decode (`DisallowUnknownFields`), and
+- `internal/bundle`: Go types for bundle v1/v2/v3, strict decode (`DisallowUnknownFields`), and
   semantic checks the JSON Schema cannot express: chapter indexes 1..n, starts
   never going backwards, `e >= s`, words inside duration, paths staying inside the bundle,
-  `fig` only in v2 with an existing local image, alignment version = manifest version.
+  `fig` only in v2+ with an existing local image, alignment version = manifest version,
+  glossary only in v3 with ids = positions, marks only with a glossary, inside `p`
+  blocks, pointing at an entry, sorted and non-overlapping.
 - `internal/library`: immutable index built by `Scan`. Bad bundles get logged and
   skipped; duplicate ids are a hard error. `Shelf` holds the current `Library`
   in an `atomic.Pointer`; `Refresh` builds a new one and swaps it in. On refresh
@@ -161,7 +180,8 @@ and shows "from {author}".
 
 1. **The bundle format is a contract.** `schema/bundle.v*.schema.json` and
    `testdata/golden-bundle/` must stay byte-identical with audiobook-forge.
-   Golden `demo` is v1, `figures` is v2 (pictures). A breaking change means a
+   Golden `demo` is v1, `figures` is v2 (pictures), `glossary` is v3 (index hover
+   entries). A breaking change means a
    new `schema_version` in both repos, plus a reader that still loads the old ones
    (`MinSchemaVersion`..`SchemaVersion`).
 2. **Server renders, client syncs.** New UI is templ + HTMX first. Add JS only
