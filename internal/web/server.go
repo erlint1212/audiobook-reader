@@ -60,6 +60,7 @@ func New(lib *library.Shelf, store progress.Store, ns notes.Store, log *slog.Log
 	s.mux.HandleFunc("POST /import", s.handleImport)
 	s.mux.HandleFunc("POST /books/{id}/refresh", s.handleRefreshBook)
 	s.mux.HandleFunc("GET /books/{id}/ch/{n}/next", s.handleNextLink)
+	s.mux.HandleFunc("GET /books/{id}/ch/{n}/sections", s.handleSections)
 	s.mux.HandleFunc("POST /books/{id}/notes", s.handleNoteAdd)
 	s.mux.HandleFunc("POST /books/{id}/notes/{nid}", s.handleNoteUpdate)
 	s.mux.HandleFunc("DELETE /books/{id}/notes/{nid}", s.handleNoteDelete)
@@ -147,14 +148,41 @@ func (s *Server) handleChapter(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	start := s.startTime(r, b, ch)
+	pos := s.position(b)
+	start := startTime(r, ch, pos)
 	ns := s.bookNotes(b)
 	// htmx chapter switches only need the reader section.
 	if r.Header.Get("HX-Request") == "true" {
-		s.render(w, r, views.Reader(b, ch, a, start, ns))
+		s.render(w, r, views.Reader(b, ch, a, start, pos, ns))
 		return
 	}
-	s.render(w, r, views.ReaderPage(b, ch, a, start, ns))
+	s.render(w, r, views.ReaderPage(b, ch, a, start, pos, ns))
+}
+
+// handleSections renders the subchapter dropdown of chapter {n}, loaded
+// when the dropdown first opens. view=reader makes its links swap #reader.
+func (s *Server) handleSections(w http.ResponseWriter, r *http.Request) {
+	b, ch, ok := s.chapter(w, r)
+	if !ok {
+		return
+	}
+	a, err := b.LoadAlignment(ch)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, r, views.Sections(b, ch, a, r.URL.Query().Get("view") == "reader"))
+}
+
+// position is the book's saved progress. A broken progress file must not
+// block reading, so it is logged and shown as no progress.
+func (s *Server) position(b bundle.Book) progress.Position {
+	pos, _, err := s.store.Get(b.Manifest.ID)
+	if err != nil {
+		s.log.Warn("read progress", "book", b.Manifest.ID, "err", err)
+		return progress.Position{}
+	}
+	return pos
 }
 
 // bookNotes lists the book's notes. A broken notes file must not block
@@ -312,11 +340,11 @@ func quoteFor(a bundle.Alignment, start, end float64) string {
 }
 
 // startTime prefers ?t=, then saved progress for this chapter, then 0.
-func (s *Server) startTime(r *http.Request, b bundle.Book, ch bundle.Chapter) float64 {
+func startTime(r *http.Request, ch bundle.Chapter, pos progress.Position) float64 {
 	if t, err := strconv.ParseFloat(r.URL.Query().Get("t"), 64); err == nil && validTime(t) {
 		return min(t, ch.DurationS)
 	}
-	if pos, ok, err := s.store.Get(b.Manifest.ID); err == nil && ok && pos.Chapter == ch.Index {
+	if pos.Chapter == ch.Index {
 		return min(pos.Time, ch.DurationS)
 	}
 	return 0
@@ -379,12 +407,12 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad progress", http.StatusBadRequest)
 		return
 	}
-	if _, err := b.Chapter(chIdx); err != nil {
+	ch, err := b.Chapter(chIdx)
+	if err != nil {
 		http.Error(w, "bad chapter", http.StatusBadRequest)
 		return
 	}
-	pos := progress.Position{Chapter: chIdx, Time: t, Updated: time.Now().UTC()}
-	if err := s.store.Save(b.Manifest.ID, pos); err != nil {
+	if err := s.store.Record(b.Manifest.ID, chIdx, min(t, ch.DurationS), ch.DurationS, time.Now()); err != nil {
 		s.fail(w, err)
 		return
 	}

@@ -46,6 +46,15 @@ applyPrefs(loadPrefs());
 // OS theme changed: follow it, unless a fixed theme was picked.
 darkQuery.addEventListener("change", () => applyPrefs(loadPrefs()));
 
+// m:ss, or h:mm:ss for long times.
+const clock = (t) => {
+  if (!Number.isFinite(t)) return "0:00";
+  const s = Math.floor(t);
+  const mm = String(Math.floor(s / 60) % 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${mm.padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
+};
+
 document.addEventListener("alpine:init", () => {
   // Set when a chapter ends. The next reader (swapped in by htmx) sees it in
   // init() and starts playing. Shared across instances, so it lives out here.
@@ -61,6 +70,12 @@ document.addEventListener("alpine:init", () => {
   const storeSpeed = (r) => {
     try { localStorage.setItem(SPEED_KEY, String(r)); } catch { /* ignore */ }
   };
+
+  // Time estimates follow the speed: $est(secs) shows how long secs of
+  // audio take at the current rate. The store is reactive, so moving the
+  // speed slider updates every estimate on the page at once.
+  Alpine.store("play", { speed: loadSpeed() });
+  Alpine.magic("est", () => (secs) => clock(secs / Alpine.store("play").speed));
 
   // Volume works the same way. Mute is not stored: a reload is never silent.
   // 0 to MAX_VOLUME; above 1 a Web Audio gain boosts the book past what
@@ -181,6 +196,7 @@ document.addEventListener("alpine:init", () => {
         const audio = this.$refs.audio;
         const start = Number(this.$el.dataset.start) || 0;
         resume = start;
+        this.time = start; // so the drawer marks the right section before play
         if (start > 0) {
           audio.addEventListener("loadedmetadata", () => { audio.currentTime = start; }, { once: true });
         }
@@ -262,6 +278,15 @@ document.addEventListener("alpine:init", () => {
       // Drawer link clicked (htmx does the swap). Keep playing if we were.
       pick() {
         autoplay = this.playing;
+      },
+
+      // Subchapter of the open chapter picked in the drawer: seek there,
+      // close the drawer and follow the text again. No reload.
+      jump(t) {
+        this.$refs.audio.currentTime = t;
+        this.chapters = false;
+        this.tick();
+        this.resumeFollow();
       },
 
       // Page scrolled by hand: stop following. Scrolling a drawer does not count.
@@ -350,6 +375,7 @@ document.addEventListener("alpine:init", () => {
         const audio = this.$refs.audio;
         audio.defaultPlaybackRate = this.speed;
         audio.playbackRate = this.speed;
+        Alpine.store("play").speed = this.speed;
         storeSpeed(this.speed);
       },
 
@@ -377,14 +403,7 @@ document.addEventListener("alpine:init", () => {
         if (this.follow) this.$nextTick(() => this.resumeFollow());
       },
 
-      // m:ss, or h:mm:ss for long chapters.
-      clock(t) {
-        if (!Number.isFinite(t)) return "0:00";
-        const s = Math.floor(t);
-        const mm = String(Math.floor(s / 60) % 60);
-        const ss = String(s % 60).padStart(2, "0");
-        return s >= 3600 ? `${Math.floor(s / 3600)}:${mm.padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
-      },
+      clock,
 
       destroy() {
         cancelAnimationFrame(frame);

@@ -86,6 +86,32 @@ finds only "Next →". Picking a chapter while playing keeps playing (same
 `autoplay` flag as auto-advance). The drawer is inside `#reader`, so a swap
 replaces it closed.
 
+Both chapter lists (book page and drawer) use one templ component,
+`chapterRow`. Each row is a `<details>`. Its `<summary>` holds a ▸, the
+chapter link, note counts, the status and the time. Browsers follow a link
+inside a summary instead of toggling it, so the title opens the chapter and
+the rest of the row drops the list down.
+
+- **Subchapters** (`views/sections.go`): bundles have no section list and
+  headings have no level. So `sections` makes a flat list from the `h` blocks.
+  It skips headings before the first body block (the chapter's own title,
+  maybe after a cover picture), one-word callouts (Note, Tip, Warning,
+  Caution, Important) and numbered captions ("Figure 1-1.", "Table 2", "Example 3").
+  A section runs until the next one starts. Alignments are big, so the list
+  is fetched only on first open (`hx-trigger="toggle once"`,
+  `hx-target="find ol"`, `GET …/sections`). The exception is the reader's
+  current chapter. Its row is rendered open with its sections inline, as
+  buttons that call `jump(t)` (seek, no reload). The section being played gets
+  `aria-current` from the reader's `time`.
+- **Status**: ✓ when done; a `<progress>` bar and % while part heard; empty
+  while unstarted. It comes from the chapter marks in `progress` (below).
+- **Times follow the speed.** sync.js keeps the speed in an Alpine store
+  (`$store.play.speed`, which `setSpeed` updates). The magic `$est(secs)`
+  formats `secs / speed`. Templates render times through `est(d)`, whose
+  server text is the 1× fallback. A part-heard chapter shows its time
+  left. The current chapter in the drawer shows its time left live. The book
+  page sums the time left (`bookStatus`) and shows "N of M done".
+
 Notes: select words in the reader and a floating "＋ Note" button shows
 (`selChanged` on `selectionchange`; it fires on `pointerdown` because a tap
 on touch screens clears the selection before `click`). It fills `draft` with
@@ -137,18 +163,26 @@ and shows "from {author}".
   skipped; duplicate ids are a hard error. `Shelf` holds the current `Library`
   in an `atomic.Pointer`; `Refresh` builds a new one and swaps it in. On refresh
   a bundle that fails to load (forge mid-write) keeps its last good version.
-- `internal/progress`: per-book position store.
+- `internal/progress`: per-book position store. A `Position` has the resume
+  point and a `Mark{furthest, done}` per chapter (`chapters`). `Record` (POST
+  progress) does read-modify-write under a mutex, with these rules:
+  - a time under `StartedMin` (1s) leaves the chapter unstarted, so opening it does not count;
+  - `furthest` only grows;
+  - within `DoneSlack` (2s) of the end, the chapter is done, and done stays done.
+
+  The client saves only after playback (pause / every 10s while playing).
+  `Merge` (import) always merges marks and takes the resume point only when newer.
 - `internal/notes`: per-book notes/bookmarks (one JSON array per book).
   Changes are read-modify-write, so `Store` holds a mutex. Ids are 16 hex
   chars from `crypto/rand`; handlers check `ValidID` before use.
 - `internal/atomicfile`: temp file + rename, and `Stems` (list `*.json` ids), shared by both stores.
-- `internal/backup`: export format (`version` 2: `{version, exported, books: {id: {progress, notes}}}`;
-  v2 added a note's optional `author`, v1 files still decode).
+- `internal/backup`: export format (`version` 3: `{version, exported, books: {id: {progress, notes}}}`;
+  v2 added a note's optional `author`, v3 the progress `chapters` marks; v1/v2 files still decode).
   `Build` gathers every book with data on disk, in the library or not. `BuildBook` is the
   share file: one book, no progress, the user's own notes (empty `author`) stamped with
   the sender name; notes from others keep theirs. `Decode` is strict
   (unknown fields, unknown version, non-slug id, bad author → error). `Apply` **merges, never deletes**:
-  progress is replaced only by a later `updated`, notes merge by id (later `updated` wins),
+  the resume point is replaced only by a later `updated`, chapter marks always merge, notes merge by id (later `updated` wins),
   so importing an old backup cannot lose newer data. Imported quotes are trusted as-is.
 - `internal/web`: handlers + routes. `views/` holds templ components and
   `static/` holds `sync.js` + Tailwind input.
@@ -163,10 +197,11 @@ and shows "from {author}".
 | `GET /books/{id}/audio/{n}` | audio via `http.ServeContent` (Range → 206, needed for seeking) |
 | `GET /books/{id}/cover` | cover image if the manifest has one |
 | `GET /books/{id}/ch/{n}/img/{b}` | image of picture block `b` (0-based block index); 404 if not a `fig` |
-| `POST /books/{id}/progress` | form `chapter`, `time` → 204 |
+| `POST /books/{id}/progress` | form `chapter`, `time` → resume point + chapter mark (`Store.Record`) → 204 |
 | `POST /refresh` | rescan library → 303 `/` |
 | `POST /books/{id}/refresh` | rescan library → 303 `/books/{id}` |
 | `GET /books/{id}/ch/{n}/next` | rescan, return the "Next →" fragment (live link or polling placeholder) |
+| `GET /books/{id}/ch/{n}/sections[?view=reader]` | subchapter `<li>`s for a chapter row's dropdown |
 | `POST /books/{id}/notes[?view=reader]` | form `chapter`, `start`, `end` (word starts), `text` → `NotesList` |
 | `POST /books/{id}/notes/{nid}[?view=reader]` | form `text` → update, `NotesList` |
 | `DELETE /books/{id}/notes/{nid}[?view=reader]` | delete → `NotesList` (htmx 4 sends no form data with DELETE, hence the query) |

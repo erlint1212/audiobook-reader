@@ -57,36 +57,34 @@ templ BookPage(b bundle.Book, pos progress.Position, hasPos bool, ns []notes.Not
 		} else {
 			<p class="mb-8 text-sm text-stone-500">No notes yet. Select text while reading to add one, or import notes someone sent you.</p>
 		}
-		<h2 class="mb-2 text-lg font-semibold">Chapters</h2>
+		<div class="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+			<h2 class="text-lg font-semibold">Chapters</h2>
+			{{ done, left := bookStatus(b, pos) }}
+			<p class="text-sm tabular-nums text-stone-500">
+				{ itoa(done) } of { itoa(len(b.Manifest.Chapters)) } done ·
+				@est(left)
+				left
+				<span x-data x-text="'at ' + $store.play.speed + '×'"></span>
+			</p>
+		</div>
 		<ol class="divide-y divide-stone-200 dark:divide-stone-700">
 			{{ counts := countNotes(ns) }}
 			for _, ch := range b.Manifest.Chapters {
-				<li>
-					<a href={ chapterURL(b.Manifest.ID, ch.Index) } class="flex justify-between gap-3 py-2 hover:underline">
-						<span class="flex gap-3">
-							@chapterNum(ch.Index)
-							<span>{ ch.Title }</span>
-						</span>
-						<span class="flex shrink-0 items-center gap-3 text-sm text-stone-500 tabular-nums">
-							@noteCount(ch.Index, counts[ch.Index], false)
-							<span>{ clock(ch.DurationS) }</span>
-						</span>
-					</a>
-				</li>
+				@chapterRow(b, ch, markOf(pos, ch.Index), counts[ch.Index], false, false, nil)
 			}
 		</ol>
 	}
 }
 
-templ ReaderPage(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64, ns []notes.Note) {
+templ ReaderPage(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64, pos progress.Position, ns []notes.Note) {
 	@Layout(ch.Title + " · " + b.Manifest.Title) {
-		@Reader(b, ch, a, start, ns)
+		@Reader(b, ch, a, start, pos, ns)
 	}
 }
 
 // Reader is also returned alone as an htmx fragment when switching chapters.
 // All per-word styling lives here; sync.js only toggles data-active.
-templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64, ns []notes.Note) {
+templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64, pos progress.Position, ns []notes.Note) {
 	<section
 		id="reader"
 		x-data="reader"
@@ -133,7 +131,7 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		</div>
 		// Sibling of the top bar, not inside it: its backdrop-blur would make
 		// these fixed elements position relative to the bar.
-		@chapterDrawer(b, ch.Index, ns)
+		@chapterDrawer(b, ch, a, pos, ns)
 		@notesDrawer(b, ch.Index, ns)
 		// pb-[40vh] lets the last lines scroll up past the fixed player bar.
 		<article
@@ -304,7 +302,12 @@ templ readerBlock(b bundle.Book, chIndex, bi int, blk bundle.Block) {
 // the spoken form on hover.
 templ words(ws []bundle.Word) {
 	for _, w := range ws {
-		<span data-s={ secs(w.S) } if spoken(w) != "" { title={ spoken(w) } }>{ w.T }</span>{ " " }
+		<span
+			data-s={ secs(w.S) }
+			if spoken(w) != "" {
+				title={ spoken(w) }
+			}
+		>{ w.T }</span>{ " " }
 	}
 }
 
@@ -546,7 +549,7 @@ templ chapterNum(i int) {
 // inside #reader, so picking a chapter swaps it out (closed) with the rest.
 // Links carry no rel, so sync.js's a[rel=next] still finds only "Next →".
 // x-cloak hides both parts until Alpine starts; Alpine then drops the attribute.
-templ chapterDrawer(b bundle.Book, cur int, ns []notes.Note) {
+templ chapterDrawer(b bundle.Book, cur bundle.Chapter, a bundle.Alignment, pos progress.Position, ns []notes.Note) {
 	<div
 		x-cloak
 		x-show="chapters"
@@ -576,31 +579,154 @@ templ chapterDrawer(b bundle.Book, cur int, ns []notes.Note) {
 				class="rounded px-2 py-1 hover:bg-stone-200 dark:hover:bg-stone-700"
 			>✕</button>
 		</div>
-		<ol class="py-2">
+		<ol class="py-2 text-sm">
 			{{ counts := countNotes(ns) }}
 			for _, c := range b.Manifest.Chapters {
-				<li>
-					<a
-						href={ chapterURL(b.Manifest.ID, c.Index) }
+				if c.Index == cur.Index {
+					@chapterRow(b, c, markOf(pos, c.Index), counts[c.Index], true, true, sections(a, cur))
+				} else {
+					@chapterRow(b, c, markOf(pos, c.Index), counts[c.Index], true, false, nil)
+				}
+			}
+		</ol>
+	</nav>
+}
+
+// chapterRow is one chapter in the book page's list or the reader's drawer:
+// a <details> whose ▸ drops down the subchapters. They load from the server
+// on first open (hx-trigger "toggle once"), except for the reader's current
+// chapter (cur), which is open with its sections already rendered. Clicking
+// the title opens the chapter; the link sits inside <summary>, and browsers
+// follow a link there instead of toggling.
+templ chapterRow(b bundle.Book, c bundle.Chapter, m progress.Mark, nc chapterNotes, inReader bool, cur bool, list []section) {
+	<li>
+		<details
+			class="group"
+			if cur {
+				open
+			} else {
+				hx-get={ sectionsURL(b.Manifest.ID, c.Index, inReader) }
+				hx-trigger="toggle once"
+				hx-target="find ol"
+				hx-swap="innerHTML"
+			}
+		>
+			<summary class="flex cursor-pointer list-none items-center gap-2 py-2 pr-4 [&::-webkit-details-marker]:hidden has-[a[aria-current=page]]:bg-amber-200 has-[a[aria-current=page]]:font-semibold dark:has-[a[aria-current=page]]:bg-amber-700 hover:bg-stone-200 dark:hover:bg-stone-700">
+				<span aria-hidden="true" class="w-4 shrink-0 text-center text-xs text-stone-400 transition-transform group-open:rotate-90">▸</span>
+				<a
+					href={ chapterURL(b.Manifest.ID, c.Index) }
+					if inReader {
 						hx-get={ string(chapterURL(b.Manifest.ID, c.Index)) }
 						hx-target="#reader"
 						hx-swap="outerHTML"
 						hx-push-url="true"
 						x-on:click="pick()"
-						if c.Index == cur {
-							aria-current="page"
-						}
-						class="flex gap-3 px-4 py-2 text-sm hover:bg-stone-200 dark:hover:bg-stone-700 aria-[current=page]:bg-amber-200 aria-[current=page]:font-semibold dark:aria-[current=page]:bg-amber-700"
-					>
-						@chapterNum(c.Index)
-						<span class="flex-1">{ c.Title }</span>
-						@noteCount(c.Index, counts[c.Index], false)
-						<span class="tabular-nums text-stone-500">{ clock(c.DurationS) }</span>
-					</a>
-				</li>
+					}
+					if cur {
+						aria-current="page"
+					}
+					class="flex flex-1 gap-3 hover:underline"
+				>
+					@chapterNum(c.Index)
+					<span class="flex-1">{ c.Title }</span>
+				</a>
+				<span class="flex shrink-0 items-center gap-3 text-sm tabular-nums text-stone-500">
+					@noteCount(c.Index, nc, false)
+					@chapterStatus(m, c.DurationS)
+					if cur {
+						<span x-text={ liveLeft(c.DurationS) }>{ clock(c.DurationS) }</span>
+					} else if m.Started() && !m.Done {
+						<span>
+							@est(c.DurationS - m.Furthest)
+							left
+						</span>
+					} else {
+						@est(c.DurationS)
+					}
+				</span>
+			</summary>
+			<ol class="pb-2 pl-14 text-sm">
+				if cur {
+					@sectionItems(b, c, list, inReader, true)
+				} else {
+					<li class="py-1 text-stone-400">Loading…</li>
+				}
+			</ol>
+		</details>
+	</li>
+}
+
+// chapterStatus: ✓ when finished, a bar and "42%" while part heard, nothing
+// while unstarted (opening a chapter without listening leaves it so).
+templ chapterStatus(m progress.Mark, dur float64) {
+	if m.Done {
+		<span title="Completed" aria-label="Completed" class="text-emerald-600 dark:text-emerald-400">✓</span>
+	} else if m.Started() {
+		<span title={ percent(m, dur) + " heard" } class="flex items-center gap-1 text-xs">
+			<progress
+				max="1"
+				value={ fraction(m, dur) }
+				aria-label="Heard"
+				class="h-1.5 w-10 appearance-none overflow-hidden rounded-full bg-stone-200 dark:bg-stone-700 [&::-webkit-progress-bar]:bg-stone-200 dark:[&::-webkit-progress-bar]:bg-stone-700 [&::-webkit-progress-value]:bg-amber-500 [&::-moz-progress-bar]:bg-amber-500"
+			></progress>
+			{ percent(m, dur) }
+		</span>
+	}
+}
+
+// est shows d seconds of audio as the time it takes at the chosen speed
+// ($est in sync.js). The server text is the 1× value until Alpine starts.
+templ est(d float64) {
+	<span x-data x-text={ estExpr(d) }>{ clock(d) }</span>
+}
+
+// Sections is the dropdown under chapter ch, fetched when it first opens.
+func Sections(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, inReader bool) templ.Component {
+	return sectionItems(b, ch, sections(a, ch), inReader, false)
+}
+
+// sectionItems lists subchapters. In the reader's current chapter (cur) a
+// section is a button that seeks (jump) and lights up while it plays; other
+// chapters link to the chapter at the section's start, swapping #reader in
+// the reader like the chapter links do.
+templ sectionItems(b bundle.Book, ch bundle.Chapter, list []section, inReader bool, cur bool) {
+	if len(list) == 0 {
+		<li class="py-1 text-stone-400">No sections</li>
+	}
+	for _, sec := range list {
+		<li>
+			if cur {
+				<button
+					type="button"
+					x-on:click={ jumpCall(sec) }
+					x-bind:aria-current={ sectionActive(sec) }
+					class="flex w-full gap-3 py-1 pr-4 text-left hover:underline aria-[current=true]:font-semibold aria-[current=true]:text-amber-700 dark:aria-[current=true]:text-amber-400"
+				>
+					<span class="flex-1">{ sec.Title }</span>
+					<span class="tabular-nums text-stone-500">
+						@est(sec.Dur)
+					</span>
+				</button>
+			} else {
+				<a
+					href={ seekURL(b.Manifest.ID, ch.Index, sec.Start) }
+					if inReader {
+						hx-get={ string(seekURL(b.Manifest.ID, ch.Index, sec.Start)) }
+						hx-target="#reader"
+						hx-swap="outerHTML"
+						hx-push-url="true"
+						x-on:click="pick()"
+					}
+					class="flex gap-3 py-1 pr-4 hover:underline"
+				>
+					<span class="flex-1">{ sec.Title }</span>
+					<span class="tabular-nums text-stone-500">
+						@est(sec.Dur)
+					</span>
+				</a>
 			}
-		</ol>
-	</nav>
+		</li>
+	}
 }
 
 // notesDrawer is chapterDrawer's mirror on the right: the draft form for a

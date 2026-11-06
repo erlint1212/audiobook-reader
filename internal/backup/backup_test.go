@@ -87,7 +87,7 @@ func TestApplyKeepsNewerProgress(t *testing.T) {
 
 func TestDecodeRejects(t *testing.T) {
 	for name, doc := range map[string]string{
-		"version":  `{"version": 3, "books": {}}`,
+		"version":  `{"version": 4, "books": {}}`,
 		"zero":     `{"version": 0, "books": {}}`,
 		"author":   `{"version": 2, "books": {"demo": {"progress": null, "notes": [{"id": "00000000000000aa", "chapter": 1, "start": 0, "end": 0, "quote": "q", "text": "", "author": "a\nb", "created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z"}]}}}`,
 		"slug":     `{"version": 1, "books": {"../x": {"progress": null, "notes": []}}}`,
@@ -153,5 +153,33 @@ func TestBuildBook(t *testing.T) {
 	}
 	if mine, err := ns.List("demo"); err != nil || mine[0].Author != "" {
 		t.Errorf("BuildBook changed stored notes: %+v, %v", mine, err)
+	}
+}
+
+func TestApplyMergesChapterMarks(t *testing.T) {
+	ps, ns := stores(t)
+	if err := ps.Record("demo", 2, 30, 100, t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	doc := `{"version": 3, "exported": "2026-01-01T00:00:00Z", "books": {"demo": {"progress": {"chapter": 1, "time": 5, "updated": "2026-01-01T00:00:00Z", "chapters": {"1": {"furthest": 100, "done": true}, "2": {"furthest": 80, "done": false}}}, "notes": []}}}`
+	e, err := Decode(strings.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(e, ps, ns); err != nil {
+		t.Fatal(err)
+	}
+	pos, _, err := ps.Get("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos.Chapter != 2 || pos.Time != 30 {
+		t.Errorf("older import moved position to %d@%v", pos.Chapter, pos.Time)
+	}
+	if m := pos.Chapters[1]; !m.Done {
+		t.Errorf("chapter 1 mark = %+v, want done", m)
+	}
+	if m := pos.Chapters[2]; m.Furthest != 80 {
+		t.Errorf("chapter 2 mark = %+v, want furthest 80", m)
 	}
 }

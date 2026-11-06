@@ -21,9 +21,10 @@ import (
 
 // Version is the export format version. Bump it on a breaking change and
 // keep Decode reading the old one. Version 2 added notes' "author";
-// a version 1 file is a version 2 file without authors.
+// version 3 added per-chapter marks ("chapters") to progress. Older files
+// are newer ones without those fields.
 const (
-	Version    = 2
+	Version    = 3
 	minVersion = 1
 )
 
@@ -143,7 +144,8 @@ func BuildBook(ns notes.Store, bookID, author string, now time.Time) (Export, er
 }
 
 // Apply merges e into the stores and never deletes: a position is replaced
-// only by a later one, and notes merge by id (see notes.Store.Merge). So
+// only by a later one, chapter marks always merge (progress.Store.Merge),
+// and notes merge by id (see notes.Store.Merge). So
 // importing an old backup cannot lose newer data. e must come from Decode.
 func Apply(e Export, ps progress.Store, ns notes.Store) error {
 	for _, id := range slices.Sorted(maps.Keys(e.Books)) {
@@ -154,14 +156,7 @@ func Apply(e Export, ps progress.Store, ns notes.Store) error {
 		if d.Progress == nil {
 			continue
 		}
-		cur, ok, err := ps.Get(id)
-		if err != nil {
-			return fmt.Errorf("backup: %w", err)
-		}
-		if ok && !d.Progress.Updated.After(cur.Updated) {
-			continue
-		}
-		if err := ps.Save(id, *d.Progress); err != nil {
+		if err := ps.Merge(id, *d.Progress); err != nil {
 			return fmt.Errorf("backup: %w", err)
 		}
 	}

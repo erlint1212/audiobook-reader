@@ -76,6 +76,9 @@ func TestRoutesStatus(t *testing.T) {
 		"/books/demo/ch/1/img/0":     404,
 		"/books/demo/notes/export":   200,
 		"/books/nope/notes/export":   404,
+		"/books/demo/ch/1/sections":  200,
+		"/books/demo/ch/9/sections":  404,
+		"/books/nope/ch/1/sections":  404,
 	}
 	for path, want := range cases {
 		if got := do(s, httptest.NewRequest("GET", path, nil)).Code; got != want {
@@ -842,5 +845,75 @@ func TestReaderRendersStructure(t *testing.T) {
 	}
 	if n := strings.Count(body, "<ul"); n != 1 {
 		t.Errorf("rendered %d lists, want the two items in one", n)
+	}
+}
+
+// Chapter rows show ✓ when finished, a bar and % while part heard, and
+// nothing for a chapter only opened (a save under progress.StartedMin).
+func TestChapterStatus(t *testing.T) {
+	s, store := newTestServer(t)
+	save := func(ch, at string) {
+		t.Helper()
+		w := postForm(s, "/books/demo/progress", url.Values{"chapter": {ch}, "time": {at}})
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("POST progress %s@%s = %d", ch, at, w.Code)
+		}
+	}
+	save("2", "0.5") // opened chapter 2, barely played
+	body := do(s, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	if strings.Contains(body, "<progress") || strings.Contains(body, `title="Completed"`) {
+		t.Error("an opened-but-unplayed chapter shows progress")
+	}
+	if !strings.Contains(body, "0 of 2 done") {
+		t.Error("book page missing done count")
+	}
+	save("1", "1.5") // 1.5 of 4s
+	save("2", "1.5") // within DoneSlack of 2s: done
+	pos, _, err := store.Get("demo")
+	if err != nil || !pos.Chapters[2].Done || pos.Chapters[1].Furthest != 1.5 {
+		t.Fatalf("marks = %+v, %v", pos.Chapters, err)
+	}
+	for _, page := range []string{"/books/demo", "/books/demo/ch/1"} {
+		body = do(s, httptest.NewRequest("GET", page, nil)).Body.String()
+		for _, want := range []string{`value="0.375"`, "37%", `title="Completed"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing %q", page, want)
+			}
+		}
+	}
+	body = do(s, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	// 1 of 2 done; 2.5s of chapter 1 left, shown at the chosen speed.
+	if !strings.Contains(body, "1 of 2 done") || !strings.Contains(body, `x-text="$est(2.500)"`) {
+		t.Error("book page summary wrong")
+	}
+}
+
+// Every chapter row is a dropdown that loads its subchapters on first open;
+// the reader's current chapter is open with them rendered already.
+func TestChapterSections(t *testing.T) {
+	s, _ := newTestServer(t)
+	book := do(s, httptest.NewRequest("GET", "/books/demo", nil)).Body.String()
+	for _, want := range []string{
+		`hx-get="/books/demo/ch/1/sections"`,
+		`hx-trigger="toggle once"`,
+		`hx-target="find ol"`,
+	} {
+		if !strings.Contains(book, want) {
+			t.Errorf("book page missing %q", want)
+		}
+	}
+	reader := do(s, httptest.NewRequest("GET", "/books/demo/ch/1", nil)).Body.String()
+	if !strings.Contains(reader, `hx-get="/books/demo/ch/2/sections?view=reader"`) {
+		t.Error("drawer rows do not load sections in reader view")
+	}
+	if strings.Contains(reader, `hx-get="/books/demo/ch/1/sections`) {
+		t.Error("current chapter should render its sections inline, not load them")
+	}
+	if !strings.Contains(reader, "<details class=\"group\" open") {
+		t.Error("current chapter's dropdown not open")
+	}
+	frag := do(s, httptest.NewRequest("GET", "/books/structured/ch/1/sections", nil)).Body.String()
+	if !strings.Contains(frag, "No sections") {
+		t.Errorf("sections fragment = %q", frag)
 	}
 }

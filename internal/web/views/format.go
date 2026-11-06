@@ -266,3 +266,57 @@ func codeListing(blk bundle.Block) templ.Component {
 		return nil
 	})
 }
+
+func sectionsURL(id string, ch int, inReader bool) string {
+	return fmt.Sprintf("/books/%s/ch/%d/sections%s", id, ch, viewQuery(inReader))
+}
+
+// seekURL opens chapter ch at t seconds.
+func seekURL(id string, ch int, t float64) templ.SafeURL {
+	return templ.URL(fmt.Sprintf("/books/%s/ch/%d?t=%s", id, ch, secs(t)))
+}
+
+// estExpr is the Alpine expression that shows d seconds of audio as wall
+// time at the chosen speed ($est in sync.js).
+func estExpr(d float64) string { return "$est(" + secs(d) + ")" }
+
+// markOf is chapter ch's mark; the zero Mark (unstarted) if none.
+func markOf(pos progress.Position, ch int) progress.Mark { return pos.Chapters[ch] }
+
+// percent is how much of a chapter was heard, as "42%".
+func percent(m progress.Mark, dur float64) string {
+	return strconv.Itoa(int(m.Fraction(dur)*100)) + "%"
+}
+
+// fraction is m.Fraction for the <progress> value attribute.
+func fraction(m progress.Mark, dur float64) string {
+	return strconv.FormatFloat(m.Fraction(dur), 'f', 3, 64)
+}
+
+// bookStatus sums up a book: chapters done, and audio left in the chapters
+// not done (at 1×; the page scales it by speed).
+func bookStatus(b bundle.Book, pos progress.Position) (done int, left float64) {
+	for _, ch := range b.Manifest.Chapters {
+		m := markOf(pos, ch.Index)
+		if m.Done {
+			done++
+			continue
+		}
+		left += max(0, ch.DurationS-m.Furthest)
+	}
+	return done, left
+}
+
+// liveLeft is the Alpine expression for time left in the chapter being
+// played, from the reader's own time and duration (dur until metadata loads).
+func liveLeft(dur float64) string {
+	return "$est(Math.max(0, (duration || " + secs(dur) + ") - time)) + ' left'"
+}
+
+// sectionActive is true while the reader's time is inside sec.
+func sectionActive(sec section) string {
+	return "time >= " + secs(sec.Start) + " && time < " + secs(sec.Start+sec.Dur) + " ? 'true' : null"
+}
+
+// jumpCall seeks the open chapter to sec (jump in sync.js).
+func jumpCall(sec section) string { return "jump(" + secs(sec.Start) + ")" }
