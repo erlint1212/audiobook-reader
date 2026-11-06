@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	golden   = "../../testdata/golden-bundle/demo"    // schema v1
-	goldenV2 = "../../testdata/golden-bundle/figures" // schema v2, pictures
+	golden   = "../../testdata/golden-bundle/demo"       // schema v1
+	goldenV2 = "../../testdata/golden-bundle/figures"    // schema v2, pictures
+	goldenV3 = "../../testdata/golden-bundle/structured" // schema v3, tables, code, say
 )
 
 func TestLoadGolden(t *testing.T) {
@@ -113,7 +114,7 @@ func firstWords(doc map[string]any) []any {
 
 func TestManifestRejects(t *testing.T) {
 	cases := map[string]func(map[string]any){
-		"schema version": func(d map[string]any) { d["schema_version"] = 3 },
+		"schema version": func(d map[string]any) { d["schema_version"] = 4 },
 		"bad id":         func(d map[string]any) { d["id"] = "Bad ID" },
 		"unknown field":  func(d map[string]any) { d["extra"] = true },
 		"path escape": func(d map[string]any) {
@@ -208,6 +209,112 @@ func TestPictureRejects(t *testing.T) {
 			}
 			if _, err := b.LoadAlignment(b.Manifest.Chapters[0]); err == nil {
 				t.Fatal("LoadAlignment succeeded, want error")
+			}
+		})
+	}
+}
+
+func TestLoadGoldenV3(t *testing.T) {
+	b, err := Load(goldenV3)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	a, err := b.LoadAlignment(b.Manifest.Chapters[0])
+	if err != nil {
+		t.Fatalf("LoadAlignment: %v", err)
+	}
+	var kinds []BlockKind
+	for _, blk := range a.Blocks {
+		kinds = append(kinds, blk.Kind)
+	}
+	want := []BlockKind{KindHeading, KindParagraph, KindQuote, KindListItem, KindListItem, KindCode, KindTable}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("kinds = %v, want %v", kinds, want)
+	}
+	if w := a.Blocks[1].Words[0]; w.Say == nil || *w.Say != "number" {
+		t.Errorf("No. say = %v, want number", w.Say)
+	}
+	if w := a.Blocks[1].Words[2]; w.Say != nil {
+		t.Errorf("costs say = %q, want unset", *w.Say)
+	}
+	if li := a.Blocks[4]; li.Marker != "◦" || li.Depth == nil || *li.Depth != 1 {
+		t.Errorf("li = %+v", li)
+	}
+	if got := a.Blocks[6].Rows[0][0]; got != (Cell{N: 1, TH: true}) {
+		t.Errorf("first cell = %+v", got)
+	}
+}
+
+func TestStructuredRejects(t *testing.T) {
+	block := func(d map[string]any, i int) map[string]any {
+		return d["blocks"].([]any)[i].(map[string]any)
+	}
+	words := func(d map[string]any, i int) []any { return block(d, i)["words"].([]any) }
+	cases := map[string]func(map[string]any){
+		"code without text": func(d map[string]any) { delete(block(d, 5), "text") },
+		"code word not in text": func(d map[string]any) {
+			words(d, 5)[0].(map[string]any)["t"] = "class"
+		},
+		"code words out of order": func(d map[string]any) {
+			words(d, 5)[0].(map[string]any)["t"], words(d, 5)[2].(map[string]any)["t"] = "return", "def"
+		},
+		"table without rows": func(d map[string]any) { delete(block(d, 6), "rows") },
+		"cells miss a word": func(d map[string]any) {
+			block(d, 6)["rows"].([]any)[1].([]any)[1].(map[string]any)["n"] = 0
+		},
+		"negative cell": func(d map[string]any) {
+			block(d, 6)["rows"].([]any)[1].([]any)[1].(map[string]any)["n"] = -1
+		},
+		"li without marker":   func(d map[string]any) { delete(block(d, 3), "marker") },
+		"li without depth":    func(d map[string]any) { delete(block(d, 3), "depth") },
+		"li too deep":         func(d map[string]any) { block(d, 3)["depth"] = MaxDepth + 1 },
+		"marker on paragraph": func(d map[string]any) { block(d, 1)["marker"] = "1." },
+		"rows on code":        func(d map[string]any) { block(d, 5)["rows"] = []any{} },
+		"empty quote":         func(d map[string]any) { block(d, 2)["words"] = []any{} },
+		"unknown cell field": func(d map[string]any) {
+			block(d, 6)["rows"].([]any)[0].([]any)[0].(map[string]any)["span"] = 2
+		},
+	}
+	for name, edit := range cases {
+		t.Run(name, func(t *testing.T) {
+			b, err := Load(copyBundle(t, goldenV3, "chapters/001.align.json", edit))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if _, err := b.LoadAlignment(b.Manifest.Chapters[0]); err == nil {
+				t.Fatal("LoadAlignment succeeded, want error")
+			}
+		})
+	}
+}
+
+// v3 additions must not sneak into an older bundle.
+func TestV3FeaturesRejectedInV2(t *testing.T) {
+	cases := map[string]struct {
+		block map[string]any
+		ok    bool
+	}{
+		"plain p (control)": {map[string]any{"kind": "p", "words": []any{
+			map[string]any{"t": "a", "s": 5.0, "e": 5.0},
+		}}, true},
+		"quote block": {map[string]any{"kind": "quote", "words": []any{
+			map[string]any{"t": "a", "s": 5.0, "e": 5.0},
+		}}, false},
+		"say": {map[string]any{"kind": "p", "words": []any{
+			map[string]any{"t": "a", "s": 5.0, "e": 5.0, "say": "b"},
+		}}, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := copyBundle(t, goldenV2, "chapters/001.align.json", func(d map[string]any) {
+				d["blocks"] = append(d["blocks"].([]any), tc.block)
+			})
+			b, err := Load(dir)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if _, err := b.LoadAlignment(b.Manifest.Chapters[0]); (err == nil) != tc.ok {
+				t.Fatalf("LoadAlignment err = %v, want ok = %v", err, tc.ok)
 			}
 		})
 	}

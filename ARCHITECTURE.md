@@ -10,12 +10,27 @@ the bundles this repo reads. The two repos share **nothing but the bundle format
 EPUB ──forge──▶ bundle dir (manifest.json, NNN.opus, NNN.align.json, images/) ──reader──▶ browser
 ```
 
-Bundles are schema v1 or v2. v2 adds picture blocks: `{"kind": "fig",
+Bundles are schema v1, v2 or v3. v2 adds picture blocks: `{"kind": "fig",
 "image": "images/001.png", "words": [...]}`, where words are the caption
 (else alt text) and may be empty. The reader renders a `<figure>` with the
 image and the words as a `<figcaption>`. While a caption word is active the
 figure gets a ring through Tailwind `has-[span[data-active]]:` (CSS `:has()`),
 so sync.js needs no picture logic beyond keeping the whole figure in view.
+
+v3 keeps every block's words flat, in reading order (so sync.js, notes and
+`quoteFor` never need to know the layout), and adds layout fields per kind:
+
+| kind | rendered as | from |
+|---|---|---|
+| `quote` | `<blockquote>` | — |
+| `li` | runs of items grouped into one `<ul>` (`blockRuns`); `marker` in a `<b aria-hidden>`, `depth` → `pl-6`… (`indent`) | `marker`, `depth` |
+| `code` | `<pre data-hscroll><code>` built in Go (`codeListing`): each word a span, the text between words (spaces, line breaks) copied as is. Not templ markup, because templ puts spaces between statements | `text` |
+| `table` | `<div data-hscroll><table>`, `th`/`td` per cell (`tableRows` slices the words by each cell's `n`) | `rows` |
+
+A word also may carry `say`, what the forge's TTS read for it (`$5` → "five
+dollars"). The reader shows `t` and puts `say` in the span's `title` (hover),
+"(silent)" for `""`. sync.js scrolls a `[data-hscroll]` box sideways
+(`scrollLeft`, so only the box moves) when the spoken word is outside it.
 
 The reader scans `-library` at startup and again on refresh (Refresh buttons
 on the library and book pages, and the reader's last-chapter poll). Each request renders HTML on the
@@ -111,10 +126,13 @@ and shows "from {author}".
 ## Packages
 
 - `cmd/reader`: flags, wiring, graceful shutdown.
-- `internal/bundle`: Go types for bundle v1/v2, strict decode (`DisallowUnknownFields`), and
+- `internal/bundle`: Go types for bundle v1/v2/v3, strict decode (`DisallowUnknownFields`), and
   semantic checks the JSON Schema cannot express: chapter indexes 1..n, starts
   never going backwards, `e >= s`, words inside duration, paths staying inside the bundle,
-  `fig` only in v2 with an existing local image, alignment version = manifest version.
+  `fig` only in v2+ with an existing local image, alignment version = manifest version.
+  v3 (`Block.validate`): each kind from its first version only (`minVersion`), only its own
+  layout fields set, code words found in `text` in order, cell counts summing to the words,
+  `depth` ≤ `MaxDepth`; `say` only in v3.
 - `internal/library`: immutable index built by `Scan`. Bad bundles get logged and
   skipped; duplicate ids are a hard error. `Shelf` holds the current `Library`
   in an `atomic.Pointer`; `Refresh` builds a new one and swaps it in. On refresh
@@ -161,7 +179,8 @@ and shows "from {author}".
 
 1. **The bundle format is a contract.** `schema/bundle.v*.schema.json` and
    `testdata/golden-bundle/` must stay byte-identical with audiobook-forge.
-   Golden `demo` is v1, `figures` is v2 (pictures). A breaking change means a
+   Golden `demo` is v1, `figures` is v2 (pictures), `structured` is v3 (code, table,
+   list, quote, `say`). A breaking change means a
    new `schema_version` in both repos, plus a reader that still loads the old ones
    (`MinSchemaVersion`..`SchemaVersion`).
 2. **Server renders, client syncs.** New UI is templ + HTMX first. Add JS only

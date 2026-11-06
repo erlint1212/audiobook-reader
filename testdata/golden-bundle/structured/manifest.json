@@ -1,0 +1,18 @@
+{
+  "schema_version": 3,
+  "id": "structured",
+  "title": "Structured Book",
+  "author": "Test Author",
+  "language": "en",
+  "voice": "narrator.wav",
+  "created": "2026-11-06T12:00:00Z",
+  "chapters": [
+    {
+      "index": 1,
+      "title": "Prices",
+      "audio": "chapters/001.opus",
+      "alignment": "chapters/001.align.json",
+      "duration_s": 20.0
+    }
+  ]
+}

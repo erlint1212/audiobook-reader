@@ -148,6 +148,13 @@ document.addEventListener("alpine:init", () => {
       }
       const r = w.getBoundingClientRect();
       if (r.top < lo + h * 0.2 || r.bottom > lo + h * 0.7) centre(r);
+      // A wide code listing or table scrolls sideways in its own box: bring
+      // the word into that box. scrollLeft, so only the box moves.
+      const box = w.closest("[data-hscroll]");
+      const b = box?.getBoundingClientRect();
+      if (b && (r.left < b.left || r.right > b.right)) {
+        box.scrollLeft += (r.left + r.right) / 2 - (b.left + b.right) / 2;
+      }
     };
 
     return {

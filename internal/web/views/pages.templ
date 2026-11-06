@@ -139,28 +139,22 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 		<article
 			x-ref="text"
 			x-on:click="seek($event)"
-			class="mx-auto mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [[data-size=sm]_&]:text-base [[data-size=lg]_&]:text-xl [[data-size=xl]_&]:text-2xl [[data-font=serif]_&]:font-serif [[data-font=mono]_&]:font-mono [[data-leading=tight]_&]:leading-snug [[data-leading=loose]_&]:leading-loose [[data-width=narrow]_&]:max-w-xl[&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600 [&_span[data-note]]:underline [&_span[data-note]]:decoration-amber-500 [&_span[data-note]]:decoration-dotted [&_span[data-note]]:decoration-2 [&_span[data-note]]:underline-offset-4"
+			class="mx-auto mt-4 pb-[40vh] text-lg space-y-4 leading-relaxed [[data-size=sm]_&]:text-base [[data-size=lg]_&]:text-xl [[data-size=xl]_&]:text-2xl [[data-font=serif]_&]:font-serif [[data-font=mono]_&]:font-mono [[data-leading=tight]_&]:leading-snug [[data-leading=loose]_&]:leading-loose [[data-width=narrow]_&]:max-w-xl [&_span]:cursor-pointer [&_span]:rounded [&_span]:px-0.5 [&_span:hover]:bg-stone-200 dark:[&_span:hover]:bg-stone-700 [&_span[data-active]]:bg-amber-300 dark:[&_span[data-active]]:bg-amber-600 [&_span[data-note]]:underline [&_span[data-note]]:decoration-amber-500 [&_span[data-note]]:decoration-dotted [&_span[data-note]]:decoration-2 [&_span[data-note]]:underline-offset-4"
 		>
-			for bi, blk := range a.Blocks {
-				switch blk.Kind {
-					case bundle.KindHeading:
-						<h2 class="text-xl font-bold">
-							@words(blk.Words)
-						</h2>
-					case bundle.KindFigure:
-						// The ring shows while any caption word is active: pure CSS :has().
-						<figure class="rounded-lg p-2 transition-shadow has-[span[data-active]]:ring-4 has-[span[data-active]]:ring-amber-300 dark:has-[span[data-active]]:ring-amber-600">
-							<img src={ imageURL(b.Manifest.ID, ch.Index, bi) } alt="" loading="lazy" class="mx-auto max-h-[70vh] rounded"/>
-							if len(blk.Words) > 0 {
-								<figcaption class="mt-2 text-center text-base italic text-stone-600 dark:text-stone-400">
-									@words(blk.Words)
-								</figcaption>
-							}
-						</figure>
-					default:
-						<p>
-							@words(blk.Words)
-						</p>
+			for _, run := range blockRuns(a.Blocks) {
+				if run.List {
+					<ul class="space-y-1">
+						for _, item := range run.Blocks {
+							<li class={ "flex gap-2", indent(item.Depth) }>
+								<b aria-hidden="true" class="min-w-6 shrink-0 text-right font-normal text-stone-500 dark:text-stone-400">{ item.Marker }</b>
+								<div>
+									@words(item.Words)
+								</div>
+							</li>
+						}
+					</ul>
+				} else {
+					@readerBlock(b, ch.Index, run.Start, run.Blocks[0])
 				}
 			}
 		</article>
@@ -252,10 +246,65 @@ templ Reader(b bundle.Book, ch bundle.Chapter, a bundle.Alignment, start float64
 	</section>
 }
 
-// words renders one clickable span per word; sync.js highlights them.
+// readerBlock renders one block that is not a list item. bi is its index
+// in the chapter (picture URLs use it).
+templ readerBlock(b bundle.Book, chIndex, bi int, blk bundle.Block) {
+	switch blk.Kind {
+		case bundle.KindHeading:
+			<h2 class="text-xl font-bold">
+				@words(blk.Words)
+			</h2>
+		case bundle.KindFigure:
+			// The ring shows while any caption word is active: pure CSS :has().
+			<figure class="rounded-lg p-2 transition-shadow has-[span[data-active]]:ring-4 has-[span[data-active]]:ring-amber-300 dark:has-[span[data-active]]:ring-amber-600">
+				<img src={ imageURL(b.Manifest.ID, chIndex, bi) } alt="" loading="lazy" class="mx-auto max-h-[70vh] rounded"/>
+				if len(blk.Words) > 0 {
+					<figcaption class="mt-2 text-center text-base italic text-stone-600 dark:text-stone-400">
+						@words(blk.Words)
+					</figcaption>
+				}
+			</figure>
+		case bundle.KindQuote:
+			<blockquote class="border-l-4 border-stone-300 pl-4 italic text-stone-700 dark:border-stone-600 dark:text-stone-300">
+				@words(blk.Words)
+			</blockquote>
+		case bundle.KindCode:
+			// Built in Go (codeListing): templ would add spaces between
+			// statements, and a listing must keep every character as written.
+			@codeListing(blk)
+		case bundle.KindTable:
+			<div data-hscroll class="overflow-x-auto">
+				<table class="min-w-full border-collapse text-base">
+					for _, row := range tableRows(blk) {
+						<tr class="border-b border-stone-200 dark:border-stone-700">
+							for _, cell := range row {
+								if cell.Head {
+									<th scope="col" class="px-3 py-2 text-left font-semibold">
+										@words(cell.Words)
+									</th>
+								} else {
+									<td class="px-3 py-2 align-top">
+										@words(cell.Words)
+									</td>
+								}
+							}
+						</tr>
+					}
+				</table>
+			</div>
+		default:
+			<p>
+				@words(blk.Words)
+			</p>
+	}
+}
+
+// words renders one clickable span per word; sync.js highlights them. A word
+// spoken differently from how it is shown ("$5" read "five dollars") shows
+// the spoken form on hover.
 templ words(ws []bundle.Word) {
 	for _, w := range ws {
-		<span data-s={ secs(w.S) }>{ w.T }</span>{ " " }
+		<span data-s={ secs(w.S) } if spoken(w) != "" { title={ spoken(w) } }>{ w.T }</span>{ " " }
 	}
 }
 

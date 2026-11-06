@@ -1,0 +1,72 @@
+{
+  "schema_version": 3,
+  "chapter_index": 1,
+  "blocks": [
+    {
+      "kind": "h",
+      "words": [
+        { "t": "Prices", "s": 0.0, "e": 0.6 }
+      ]
+    },
+    {
+      "kind": "p",
+      "words": [
+        { "t": "No.", "s": 1.0, "e": 1.4, "say": "number" },
+        { "t": "7", "s": 1.4, "e": 1.8, "say": "seven" },
+        { "t": "costs", "s": 1.8, "e": 2.2 },
+        { "t": "$5,", "s": 2.2, "e": 2.9, "say": "five dollars," },
+        { "t": "up", "s": 3.0, "e": 3.2 },
+        { "t": "50%.", "s": 3.2, "e": 4.0, "say": "fifty percent." }
+      ]
+    },
+    {
+      "kind": "quote",
+      "words": [
+        { "t": "Less", "s": 4.6, "e": 4.9 },
+        { "t": "is", "s": 4.9, "e": 5.0 },
+        { "t": "more.", "s": 5.0, "e": 5.4 }
+      ]
+    },
+    {
+      "kind": "li",
+      "words": [
+        { "t": "Apples", "s": 6.0, "e": 6.5 }
+      ],
+      "marker": "1.",
+      "depth": 0
+    },
+    {
+      "kind": "li",
+      "words": [
+        { "t": "Green", "s": 7.0, "e": 7.4 }
+      ],
+      "marker": "◦",
+      "depth": 1
+    },
+    {
+      "kind": "code",
+      "words": [
+        { "t": "def", "s": 8.0, "e": 8.3 },
+        { "t": "f(x):", "s": 8.3, "e": 9.6, "say": "f open paren x close paren colon." },
+        { "t": "return", "s": 9.8, "e": 10.2 },
+        { "t": "x", "s": 10.2, "e": 10.3 },
+        { "t": "+", "s": 10.3, "e": 10.6, "say": "plus" },
+        { "t": "1", "s": 10.6, "e": 11.0, "say": "one." }
+      ],
+      "text": "def f(x):\n    return x + 1"
+    },
+    {
+      "kind": "table",
+      "words": [
+        { "t": "Name", "s": 11.6, "e": 12.0, "say": "Name," },
+        { "t": "Age", "s": 12.0, "e": 12.4, "say": "Age." },
+        { "t": "Alice", "s": 12.6, "e": 13.4, "say": "Name: Alice," },
+        { "t": "30", "s": 13.4, "e": 14.4, "say": "Age: thirty." }
+      ],
+      "rows": [
+        [{ "n": 1, "th": true }, { "n": 1, "th": true }],
+        [{ "n": 1, "th": false }, { "n": 1, "th": false }]
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 // Package bundle reads and validates the on-disk audiobook bundle format
-// (v1, and v2 which adds picture blocks).
+// (v1; v2 adds picture blocks; v3 adds spoken forms and code, table, list
+// item and quote blocks).
 //
 // The format is the contract with audiobook-forge. Its JSON Schemas live in
 // schema/bundle.v{1,2}.schema.json; this package mirrors them with Go types and
@@ -13,13 +14,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // SchemaVersion is the newest bundle version this reader understands.
 // MinSchemaVersion is the oldest it still loads.
 const (
-	SchemaVersion    = 2
+	SchemaVersion    = 3
 	MinSchemaVersion = 1
 )
 
@@ -30,6 +32,9 @@ const ManifestFile = "manifest.json"
 // padding.
 const durationSlack = 0.5
 
+// MaxDepth bounds list nesting, so a bad bundle cannot ask for huge indents.
+const MaxDepth = 16
+
 // BlockKind tells the reader how to render a block.
 type BlockKind string
 
@@ -39,6 +44,12 @@ const (
 	// KindFigure is a picture (schema v2). Its words are the caption, else the
 	// alt text, and may be empty.
 	KindFigure BlockKind = "fig"
+	// The rest are schema v3. KindCode keeps its verbatim Text; KindTable
+	// splits its words into Rows of cells; KindListItem has Marker and Depth.
+	KindCode     BlockKind = "code"
+	KindTable    BlockKind = "table"
+	KindListItem BlockKind = "li"
+	KindQuote    BlockKind = "quote"
 )
 
 // Manifest describes one book.
@@ -70,18 +81,33 @@ type Alignment struct {
 	Blocks        []Block `json:"blocks"`
 }
 
-// Block is a paragraph, heading or picture. Image is set only on pictures.
+// Block is one piece of a chapter. Words are always flat, in reading order;
+// the other fields only lay them out, and each is set only on its own kind:
+// Image on pictures, Text on code, Rows on tables, Marker and Depth on list
+// items.
 type Block struct {
-	Kind  BlockKind `json:"kind"`
-	Image string    `json:"image,omitempty"`
-	Words []Word    `json:"words"`
+	Kind   BlockKind `json:"kind"`
+	Image  string    `json:"image,omitempty"`
+	Words  []Word    `json:"words"`
+	Text   string    `json:"text,omitempty"`
+	Rows   [][]Cell  `json:"rows,omitempty"`
+	Marker string    `json:"marker,omitempty"`
+	Depth  *int      `json:"depth,omitempty"`
 }
 
-// Word is one displayed word with start/end time in seconds.
+// Cell is one table cell: the next N words of its block.
+type Cell struct {
+	N  int  `json:"n"`
+	TH bool `json:"th"`
+}
+
+// Word is one displayed word with start/end time in seconds. Say (v3) is
+// what was spoken for it when that differs from T, "" when silent.
 type Word struct {
-	T string  `json:"t"`
-	S float64 `json:"s"`
-	E float64 `json:"e"`
+	T   string  `json:"t"`
+	S   float64 `json:"s"`
+	E   float64 `json:"e"`
+	Say *string `json:"say,omitempty"`
 }
 
 // Book is a validated bundle rooted at Dir.
@@ -226,26 +252,13 @@ func (a Alignment) Validate(ch Chapter) error {
 	}
 	prev := 0.0
 	for bi, blk := range a.Blocks {
-		switch blk.Kind {
-		case KindParagraph, KindHeading:
-			if blk.Image != "" {
-				return fmt.Errorf("block %d: %q block with image", bi, blk.Kind)
-			}
-			if len(blk.Words) == 0 {
-				return fmt.Errorf("block %d: no words", bi)
-			}
-		case KindFigure:
-			if a.SchemaVersion < 2 {
-				return fmt.Errorf("block %d: picture needs schema_version 2", bi)
-			}
-			if blk.Image == "" || !filepath.IsLocal(filepath.FromSlash(blk.Image)) {
-				return fmt.Errorf("block %d: image path %q escapes bundle", bi, blk.Image)
-			}
-		default:
-			return fmt.Errorf("block %d: unknown kind %q", bi, blk.Kind)
+		if err := blk.validate(a.SchemaVersion); err != nil {
+			return fmt.Errorf("block %d: %w", bi, err)
 		}
 		for wi, w := range blk.Words {
 			switch {
+			case w.Say != nil && a.SchemaVersion < 3:
+				return fmt.Errorf("block %d word %d: say needs schema_version 3", bi, wi)
 			case w.T == "":
 				return fmt.Errorf("block %d word %d: empty text", bi, wi)
 			case w.S < prev:
@@ -259,6 +272,94 @@ func (a Alignment) Validate(ch Chapter) error {
 		}
 	}
 	return nil
+}
+
+// minVersion is the first schema version that has kind k, or 0 if none does.
+func minVersion(k BlockKind) int {
+	switch k {
+	case KindParagraph, KindHeading:
+		return 1
+	case KindFigure:
+		return 2
+	case KindCode, KindTable, KindListItem, KindQuote:
+		return 3
+	}
+	return 0
+}
+
+// validate checks one block's kind rules: the kind exists in version, only
+// its own layout fields are set, and they match its words.
+func (b Block) validate(version int) error {
+	since := minVersion(b.Kind)
+	switch {
+	case since == 0:
+		return fmt.Errorf("unknown kind %q", b.Kind)
+	case version < since:
+		return fmt.Errorf("%q block needs schema_version %d", b.Kind, since)
+	}
+	own := []struct {
+		name      string
+		set, want bool
+	}{
+		{"image", b.Image != "", b.Kind == KindFigure},
+		{"text", b.Text != "", b.Kind == KindCode},
+		{"rows", b.Rows != nil, b.Kind == KindTable},
+		{"marker", b.Marker != "", b.Kind == KindListItem},
+		{"depth", b.Depth != nil, b.Kind == KindListItem},
+	}
+	for _, f := range own {
+		switch {
+		case f.set && !f.want:
+			return fmt.Errorf("%q block with %s", b.Kind, f.name)
+		case !f.set && f.want:
+			return fmt.Errorf("%q block without %s", b.Kind, f.name)
+		}
+	}
+	if b.Kind != KindFigure && len(b.Words) == 0 {
+		return errors.New("no words")
+	}
+	switch b.Kind {
+	case KindFigure:
+		if !filepath.IsLocal(filepath.FromSlash(b.Image)) {
+			return fmt.Errorf("image path %q escapes bundle", b.Image)
+		}
+	case KindCode:
+		if !wordsInText(b.Text, b.Words) {
+			return errors.New("code words not found in its text in order")
+		}
+	case KindTable:
+		n := 0
+		for _, row := range b.Rows {
+			for _, c := range row {
+				if c.N < 0 {
+					return errors.New("table cell with negative word count")
+				}
+				n += c.N
+			}
+		}
+		if n != len(b.Words) {
+			return fmt.Errorf("table cells hold %d words, block has %d", n, len(b.Words))
+		}
+	case KindListItem:
+		if *b.Depth < 0 || *b.Depth > MaxDepth {
+			return fmt.Errorf("list depth %d outside 0..%d", *b.Depth, MaxDepth)
+		}
+	}
+	return nil
+}
+
+// wordsInText reports whether every word occurs in text, in order, without
+// overlapping: what lets the reader wrap each word of a listing in place.
+func wordsInText(text string, ws []Word) bool {
+	rest := text
+	for _, w := range ws {
+		i := strings.Index(rest, w.T)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(w.T):]
+	}
+	return true
 }
 
 // WordCount returns the number of words across all blocks.

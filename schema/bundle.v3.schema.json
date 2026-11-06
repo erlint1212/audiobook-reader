@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audiobook.local/schema/bundle.v3.schema.json",
+  "title": "Audiobook bundle v3",
+  "description": "Contract between audiobook-forge (writer) and audiobook-reader (reader). Keep byte-identical in both repos. v3 adds a word's spoken form (say) and structured blocks: code, table, li, quote. Readers still load v1 and v2.",
+  "$defs": {
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "id", "title", "author", "language", "voice", "created", "chapters"],
+      "properties": {
+        "schema_version": { "const": 3 },
+        "id": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "title": { "type": "string", "minLength": 1 },
+        "author": { "type": "string" },
+        "language": { "type": "string", "minLength": 2 },
+        "voice": { "type": "string" },
+        "created": { "type": "string", "format": "date-time" },
+        "cover": { "type": "string" },
+        "chapters": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/chapter" }
+        }
+      }
+    },
+    "chapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "title", "audio", "alignment", "duration_s"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "audio": { "type": "string", "minLength": 1 },
+        "alignment": { "type": "string", "minLength": 1 },
+        "duration_s": { "type": "number", "minimum": 0 }
+      }
+    },
+    "alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "chapter_index", "blocks"],
+      "properties": {
+        "schema_version": { "const": 3 },
+        "chapter_index": { "type": "integer", "minimum": 1 },
+        "blocks": { "type": "array", "items": { "$ref": "#/$defs/block" } }
+      }
+    },
+    "block": {
+      "description": "Words are always flat, in reading order. fig: image is a bundle path, words (caption, else alt text) may be empty. code: text is the verbatim listing and every word occurs in it in order. table: rows of cells, each cell holds the next n words. li: marker (\"•\", \"3.\") and nesting depth. Each kind has only its own extra fields; all but fig need words.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "words"],
+      "properties": {
+        "kind": { "enum": ["p", "h", "fig", "code", "table", "li", "quote"] },
+        "words": { "type": "array", "items": { "$ref": "#/$defs/word" } },
+        "image": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "rows": {
+          "type": "array",
+          "items": { "type": "array", "items": { "$ref": "#/$defs/cell" } }
+        },
+        "marker": { "type": "string", "minLength": 1 },
+        "depth": { "type": "integer", "minimum": 0 }
+      },
+      "oneOf": [
+        {
+          "properties": { "kind": { "const": "fig" } },
+          "required": ["image"],
+          "not": { "anyOf": [{ "required": ["text"] }, { "required": ["rows"] }, { "required": ["marker"] }, { "required": ["depth"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "code" }, "words": { "minItems": 1 } },
+          "required": ["text"],
+          "not": { "anyOf": [{ "required": ["image"] }, { "required": ["rows"] }, { "required": ["marker"] }, { "required": ["depth"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "table" }, "words": { "minItems": 1 } },
+          "required": ["rows"],
+          "not": { "anyOf": [{ "required": ["image"] }, { "required": ["text"] }, { "required": ["marker"] }, { "required": ["depth"] }] }
+        },
+        {
+          "properties": { "kind": { "const": "li" }, "words": { "minItems": 1 } },
+          "required": ["marker", "depth"],
+          "not": { "anyOf": [{ "required": ["image"] }, { "required": ["text"] }, { "required": ["rows"] }] }
+        },
+        {
+          "properties": { "kind": { "enum": ["p", "h", "quote"] }, "words": { "minItems": 1 } },
+          "not": { "anyOf": [{ "required": ["image"] }, { "required": ["text"] }, { "required": ["rows"] }, { "required": ["marker"] }, { "required": ["depth"] }] }
+        }
+      ]
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "th"],
+      "properties": {
+        "n": { "type": "integer", "minimum": 0 },
+        "th": { "type": "boolean" }
+      }
+    },
+    "word": {
+      "description": "t is shown. say is what TTS read for it, only when that differs; \"\" means silent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "s", "e"],
+      "properties": {
+        "t": { "type": "string", "minLength": 1 },
+        "s": { "type": "number", "minimum": 0 },
+        "e": { "type": "number", "minimum": 0 },
+        "say": { "type": "string" }
+      }
+    }
+  },
+  "oneOf": [{ "$ref": "#/$defs/manifest" }, { "$ref": "#/$defs/alignment" }]
+}

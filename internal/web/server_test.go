@@ -813,3 +813,34 @@ func TestShareNotes(t *testing.T) {
 		t.Errorf("notes import must not touch progress: ok %v err %v", ok, err)
 	}
 }
+
+func TestReaderRendersStructure(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := do(s, httptest.NewRequest("GET", "/books/structured/ch/1", nil)).Body.String()
+	for _, want := range []string{
+		// The listing keeps its line break and indentation, each word a span.
+		`<code><span data-s="8.000">def</span> <span data-s="8.300" title="f open paren x close paren colon.">f(x):</span>` +
+			"\n    " + `<span data-s="9.800">return</span>`,
+		`<th scope="col"`,
+		`<pre data-hscroll`, // sync.js follows the word sideways in these
+		`<div data-hscroll class="overflow-x-auto">`,
+		`<td class="px-3 py-2 align-top"><span data-s="12.600" title="Name: Alice,">Alice</span> </td>`,
+		`<blockquote`,
+		`<ul class="space-y-1">`,
+		`>◦</b>`,
+		`class="flex gap-2 pl-6"`, // depth 1
+		// Shown "$5," but spoken "five dollars,": the hover tells.
+		`<span data-s="2.200" title="five dollars,">$5,</span>`,
+		`<span data-s="1.800">costs</span>`, // read as shown: no title
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+	if n := strings.Count(body, "<span data-s="); n != 22 {
+		t.Errorf("rendered %d word spans, want every word (22)", n)
+	}
+	if n := strings.Count(body, "<ul"); n != 1 {
+		t.Errorf("rendered %d lists, want the two items in one", n)
+	}
+}
